@@ -8,7 +8,7 @@ use std::{
 
 use crate::common::{TestCounter, deploy_counter, setup_live_scanner};
 use alloy::{primitives::U256, sol_types::SolEvent};
-use event_scanner::{EventFilter, Message, assert_empty, assert_event_sequence};
+use event_scanner::{EventFilter, Message, assert_empty, assert_next};
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 
@@ -88,23 +88,13 @@ async fn multiple_contracts_same_event_isolate_callbacks() -> anyhow::Result<()>
     b.increase().send().await?.watch().await?;
     b.increase().send().await?.watch().await?;
 
-    assert_event_sequence!(
-        a_stream,
-        &[
-            TestCounter::CountIncreased { newCount: U256::from(1) },
-            TestCounter::CountIncreased { newCount: U256::from(2) },
-            TestCounter::CountIncreased { newCount: U256::from(3) }
-        ]
-    );
+    assert_next!(a_stream, &[TestCounter::CountIncreased { newCount: U256::from(1) }]);
+    assert_next!(a_stream, &[TestCounter::CountIncreased { newCount: U256::from(2) }]);
+    assert_next!(a_stream, &[TestCounter::CountIncreased { newCount: U256::from(3) }]);
     assert_empty!(a_stream);
 
-    assert_event_sequence!(
-        b_stream,
-        &[
-            TestCounter::CountIncreased { newCount: U256::from(1) },
-            TestCounter::CountIncreased { newCount: U256::from(2) }
-        ]
-    );
+    assert_next!(b_stream, &[TestCounter::CountIncreased { newCount: U256::from(1) }]);
+    assert_next!(b_stream, &[TestCounter::CountIncreased { newCount: U256::from(2) }]);
     assert_empty!(b_stream);
 
     Ok(())
@@ -136,22 +126,12 @@ async fn multiple_events_same_contract() -> anyhow::Result<()> {
     contract.decrease().send().await?.watch().await?;
     contract.decrease().send().await?.watch().await?;
 
-    assert_event_sequence!(
-        incr_stream,
-        &[
-            TestCounter::CountIncreased { newCount: U256::from(1) },
-            TestCounter::CountIncreased { newCount: U256::from(2) }
-        ]
-    );
+    assert_next!(incr_stream, &[TestCounter::CountIncreased { newCount: U256::from(1) }]);
+    assert_next!(incr_stream, &[TestCounter::CountIncreased { newCount: U256::from(2) }]);
     assert_empty!(incr_stream);
 
-    assert_event_sequence!(
-        decr_stream,
-        &[
-            TestCounter::CountDecreased { newCount: U256::from(1) },
-            TestCounter::CountDecreased { newCount: U256::from(0) }
-        ]
-    );
+    assert_next!(decr_stream, &[TestCounter::CountDecreased { newCount: U256::from(1) }]);
+    assert_next!(decr_stream, &[TestCounter::CountDecreased { newCount: U256::from(0) }]);
     assert_empty!(decr_stream);
 
     Ok(())
