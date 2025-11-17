@@ -65,7 +65,7 @@ impl<N: Network> RobustSubscription<N> {
     /// # Errors
     ///
     /// Returns an error if all providers have been exhausted and failed.
-    pub async fn recv(&mut self) -> Result<N::HeaderResponse, Error> {
+    pub async fn try_recv_block(&mut self) -> Result<N::HeaderResponse, Error> {
         let subscription_timeout = self.robust_provider.subscription_timeout;
         loop {
             self.try_reconnect_to_primary().await;
@@ -219,7 +219,7 @@ impl<N: Network> RobustSubscription<N> {
 
         tokio::spawn(async move {
             loop {
-                match self.recv().await {
+                match self.try_recv_block().await {
                     Ok(item) => {
                         if let Err(err) = tx.send(Ok(item)).await {
                             warn!(error = %err, "Downstream channel closed, stopping stream");
