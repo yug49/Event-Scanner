@@ -8,7 +8,7 @@ use std::{
 
 use crate::common::{TestCounter, deploy_counter, setup_live_scanner};
 use alloy::{primitives::U256, sol_types::SolEvent};
-use event_scanner::{EventFilter, Message, assert_empty, assert_next};
+use event_scanner::{EventFilter, Message, assert_empty, assert_event_sequence, assert_next};
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 
@@ -115,9 +115,14 @@ async fn mixed_optional_and_required_filters() -> anyhow::Result<()> {
     contract_1.increase().send().await?.watch().await?;
     contract_1.increase().send().await?.watch().await?;
 
-    assert_next!(all_stream, &[TestCounter::CountIncreased { newCount: U256::from(1) }]);
-    assert_next!(all_stream, &[TestCounter::CountIncreased { newCount: U256::from(2) }]);
-    assert_next!(all_stream, &[TestCounter::CountIncreased { newCount: U256::from(3) }]);
+    assert_event_sequence!(
+        all_stream,
+        &[
+            TestCounter::CountIncreased { newCount: U256::from(1) },
+            TestCounter::CountIncreased { newCount: U256::from(2) },
+            TestCounter::CountIncreased { newCount: U256::from(3) }
+        ]
+    );
 
     let mut all_stream = assert_empty!(all_stream);
     let mut specific_stream = assert_empty!(specific_stream);
@@ -126,11 +131,21 @@ async fn mixed_optional_and_required_filters() -> anyhow::Result<()> {
     contract_2.increase().send().await?.watch().await?;
     contract_2.increase().send().await?.watch().await?;
 
-    assert_next!(all_stream, &[TestCounter::CountIncreased { newCount: U256::from(1) }]);
-    assert_next!(all_stream, &[TestCounter::CountIncreased { newCount: U256::from(2) }]);
+    assert_event_sequence!(
+        all_stream,
+        &[
+            TestCounter::CountIncreased { newCount: U256::from(1) },
+            TestCounter::CountIncreased { newCount: U256::from(2) }
+        ]
+    );
 
-    assert_next!(specific_stream, &[TestCounter::CountIncreased { newCount: U256::from(1) }]);
-    assert_next!(specific_stream, &[TestCounter::CountIncreased { newCount: U256::from(2) }]);
+    assert_event_sequence!(
+        specific_stream,
+        &[
+            TestCounter::CountIncreased { newCount: U256::from(1) },
+            TestCounter::CountIncreased { newCount: U256::from(2) }
+        ]
+    );
 
     let mut all_stream = assert_empty!(all_stream);
     let specific_stream = assert_empty!(specific_stream);
