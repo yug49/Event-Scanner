@@ -477,17 +477,17 @@ mod tests {
         let mut subscription = robust.subscribe_blocks().await?;
 
         ws_provider.anvil_mine(Some(1), None).await?;
-        assert_eq!(1, subscription.recv().await?.number());
+        assert_eq!(1, subscription.try_recv_block().await?.number());
 
         ws_provider.anvil_mine(Some(1), None).await?;
-        assert_eq!(2, subscription.recv().await?.number());
+        assert_eq!(2, subscription.try_recv_block().await?.number());
 
         // simulate ws stream gone via no blocks mined > sub timeout
         sleep(Duration::from_millis(600)).await;
 
         http_provider.anvil_mine(Some(1), None).await?;
 
-        let err = subscription.recv().await.unwrap_err();
+        let err = subscription.try_recv_block().await.unwrap_err();
 
         // The error should be either a Timeout or BackendGone from the primary WS provider,
         // NOT a PubsubUnavailable error (which would indicate HTTP fallback was attempted)
@@ -653,12 +653,12 @@ mod tests {
 
         // simulate ws stream gone via no blocks mined > sub timeout
         ws_provider.anvil_mine(Some(1), None).await?;
-        let _block = subscription.recv().await?;
+        let _block = subscription.try_recv_block().await?;
 
         // simulate ws stream gone via no blocks mined > sub timeout
         sleep(Duration::from_millis(600)).await;
 
-        let err = subscription.recv().await.unwrap_err();
+        let err = subscription.try_recv_block().await.unwrap_err();
 
         match err {
             Error::Timeout => {}
