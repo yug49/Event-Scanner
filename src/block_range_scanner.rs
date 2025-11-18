@@ -605,26 +605,26 @@ impl<N: Network> Service<N> {
         sender: &mpsc::Sender<Message>,
         provider: &RobustProvider<N>,
         reorg_handler: &mut ReorgHandler<N>,
-    ) {
+    ) -> Option<N::BlockResponse> {
         let mut batch_count = 0;
 
         let mut next_start_block = start;
 
         // must be <= to include the edge case when start == end (i.e. return the single block
         // range)
-        while next_start_block <= end {
+        loop {
             let batch_end_num = next_start_block.saturating_add(max_block_range - 1).min(end);
             let batch_end = match provider.get_block_by_number(batch_end_num.into()).await {
                 Ok(block) => block,
                 Err(e) => {
                     error!(batch_start = next_start_block, batch_end = batch_end_num, error = %e, "Failed to get ending block of the current batch");
                     _ = sender.try_stream(e).await;
-                    return;
+                    return None;
                 }
             };
 
             if !sender.try_stream(next_start_block..=batch_end_num).await {
-                break;
+                return Some(batch_end);
             }
 
             batch_count += 1;
@@ -637,21 +637,24 @@ impl<N: Network> Service<N> {
                 Err(e) => {
                     error!(error = %e, "Failed to perform reorg check");
                     _ = sender.try_stream(e).await;
-                    return;
+                    return None;
                 }
             };
 
             next_start_block = if let Some(common_ancestor) = reorged_opt {
                 if !sender.try_stream(ScannerStatus::ReorgDetected).await {
-                    return;
+                    return None;
                 }
                 common_ancestor.header().number() + 1
             } else {
                 batch_end_num.saturating_add(1)
             };
-        }
 
-        info!(batch_count = batch_count, "Historical sync completed");
+            if next_start_block > end {
+                info!(batch_count = batch_count, "Historical sync completed");
+                return Some(batch_end);
+            }
+        }
     }
 
     async fn stream_live_blocks(
@@ -685,7 +688,7 @@ impl<N: Network> Service<N> {
 
         let confirmed = incoming_block_num.saturating_sub(block_confirmations);
 
-        Self::stream_historical_blocks(
+        let mut previous_batch_end = Self::stream_historical_blocks(
             stream_start,
             confirmed,
             max_block_range,
@@ -695,15 +698,12 @@ impl<N: Network> Service<N> {
         )
         .await;
 
+        if previous_batch_end.is_none() {
+            // the sender channel is closed
+            return;
+        }
+
         let mut batch_start = stream_start;
-        let mut previous_batch_end = match provider.get_block_by_number(confirmed.into()).await {
-            Ok(block) => Some(block),
-            Err(e) => {
-                error!(batch_start = batch_start, batch_end = confirmed, error = %e, "Failed to get initial batch end block");
-                _ = sender.try_stream(e).await;
-                return;
-            }
-        };
 
         while let Some(incoming_block) = stream.next().await {
             let incoming_block_num = incoming_block.number();
@@ -747,35 +747,25 @@ impl<N: Network> Service<N> {
                 }
             }
 
-            let confirmed = incoming_block_num.saturating_sub(block_confirmations);
-            if confirmed >= batch_start {
-                loop {
-                    // NOTE: Edge case when difference between range end and range start >= max
-                    // reads
-                    let batch_end_num =
-                        confirmed.min(batch_start.saturating_add(max_block_range - 1));
-                    previous_batch_end = match provider
-                        .get_block_by_number(batch_end_num.into())
-                        .await
-                    {
-                        Ok(block) => Some(block),
-                        Err(e) => {
-                            error!(batch_start = batch_start, batch_end = batch_end_num, error = %e, "Failed to get ending block of the current batch");
-                            _ = sender.try_stream(e).await;
-                            return;
-                        }
-                    };
-                    if !sender.try_stream(batch_start..=batch_end_num).await {
-                        return;
-                    }
+            let batch_end_num = incoming_block_num.saturating_sub(block_confirmations);
+            if batch_end_num >= batch_start {
+                previous_batch_end = Self::stream_historical_blocks(
+                    batch_start,
+                    batch_end_num,
+                    max_block_range,
+                    &sender,
+                    provider,
+                    reorg_handler,
+                )
+                .await;
 
-                    // SAFETY: Overflow cannot realistically happen
-                    batch_start = batch_end_num + 1;
-
-                    if batch_end_num == confirmed {
-                        break;
-                    }
+                if previous_batch_end.is_none() {
+                    // the sender channel is closed
+                    return;
                 }
+
+                // SAFETY: Overflow cannot realistically happen
+                batch_start = batch_end_num + 1;
             }
         }
     }
