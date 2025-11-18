@@ -696,7 +696,7 @@ impl<N: Network> Service<N> {
         .await;
 
         let mut batch_start = stream_start;
-        let mut batch_end = match provider.get_block_by_number(confirmed.into()).await {
+        let mut previous_batch_end = match provider.get_block_by_number(confirmed.into()).await {
             Ok(block) => Some(block),
             Err(e) => {
                 error!(batch_start = batch_start, batch_end = confirmed, error = %e, "Failed to get initial batch end block");
@@ -709,7 +709,7 @@ impl<N: Network> Service<N> {
             let incoming_block_num = incoming_block.number();
             info!(block_number = incoming_block_num, "Received block header");
 
-            let reorged_opt = match batch_end.as_ref() {
+            let reorged_opt = match previous_batch_end.as_ref() {
                 None => None,
                 Some(batch_end) => match reorg_handler.check(batch_end).await {
                     Ok(opt) => opt,
@@ -728,10 +728,10 @@ impl<N: Network> Service<N> {
                 // no need to stream blocks prior to the previously specified starting block
                 if common_ancestor.header().number() < stream_start {
                     batch_start = stream_start;
-                    batch_end = None;
+                    previous_batch_end = None;
                 } else {
                     batch_start = common_ancestor.header().number() + 1;
-                    batch_end = Some(common_ancestor);
+                    previous_batch_end = Some(common_ancestor);
                 }
 
                 // TODO: explain in docs that the returned block after a reorg will be the
@@ -742,8 +742,8 @@ impl<N: Network> Service<N> {
                 // no reorg happened, move the block range back to expected next start
                 //
                 // SAFETY: Overflow cannot realistically happen
-                if let Some(batch_end) = batch_end.as_ref() {
-                    batch_start = batch_end.header().number() + 1;
+                if let Some(prev_batch_end) = previous_batch_end.as_ref() {
+                    batch_start = prev_batch_end.header().number() + 1;
                 }
             }
 
@@ -754,7 +754,10 @@ impl<N: Network> Service<N> {
                     // reads
                     let batch_end_num =
                         confirmed.min(batch_start.saturating_add(max_block_range - 1));
-                    batch_end = match provider.get_block_by_number(batch_end_num.into()).await {
+                    previous_batch_end = match provider
+                        .get_block_by_number(batch_end_num.into())
+                        .await
+                    {
                         Ok(block) => Some(block),
                         Err(e) => {
                             error!(batch_start = batch_start, batch_end = batch_end_num, error = %e, "Failed to get ending block of the current batch");
