@@ -685,31 +685,25 @@ impl<N: Network> Service<N> {
 
         let confirmed = incoming_block_num.saturating_sub(block_confirmations);
 
+        Self::stream_historical_blocks(
+            stream_start,
+            confirmed,
+            max_block_range,
+            &sender,
+            provider,
+            reorg_handler,
+        )
+        .await;
+
         let mut batch_start = stream_start;
-        let mut batch_end: Option<<N as Network>::BlockResponse>;
-        // TODO: include reorg handling here, maybe rely on historic handling fn
-        loop {
-            let batch_end_num = confirmed.min(batch_start.saturating_add(max_block_range - 1));
-            batch_end = match provider.get_block_by_number(batch_end_num.into()).await {
-                Ok(block) => Some(block),
-                Err(e) => {
-                    error!(batch_start = batch_start, batch_end = batch_end_num, error = %e, "Failed to get ending block of the current batch");
-                    _ = sender.try_stream(e).await;
-                    return;
-                }
-            };
-            if !sender.try_stream(batch_start..=batch_end_num).await {
+        let mut batch_end = match provider.get_block_by_number(confirmed.into()).await {
+            Ok(block) => Some(block),
+            Err(e) => {
+                error!(batch_start = batch_start, batch_end = confirmed, error = %e, "Failed to get initial batch end block");
+                _ = sender.try_stream(e).await;
                 return;
             }
-            if batch_end_num == confirmed {
-                break;
-            }
-            batch_start = batch_end_num + 1;
-        }
-
-        // reset batch start
-        let mut batch_start = stream_start;
-        // batch_end is now set
+        };
 
         while let Some(incoming_block) = stream.next().await {
             let incoming_block_num = incoming_block.number();
