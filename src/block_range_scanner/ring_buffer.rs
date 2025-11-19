@@ -7,7 +7,7 @@ pub(crate) struct RingBuffer<T> {
 }
 
 impl<T> RingBuffer<T> {
-    /// Creates an empty RingBuffer with a specific capacity.
+    /// Creates an empty [`RingBuffer`] with a specific capacity.
     pub fn new(capacity: usize) -> Self {
         Self { inner: VecDeque::with_capacity(capacity), capacity }
     }
@@ -30,6 +30,6 @@ impl<T> RingBuffer<T> {
     }
 
     pub fn clear(&mut self) {
-        self.inner.clear()
+        self.inner.clear();
     }
 }
