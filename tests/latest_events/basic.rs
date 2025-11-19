@@ -6,7 +6,7 @@ use crate::common::{TestCounter, deploy_counter, setup_common, setup_latest_scan
 use event_scanner::{EventFilter, EventScannerBuilder, assert_closed, assert_next};
 
 #[tokio::test]
-async fn latest_scanner_exact_count_returns_last_events_in_order() -> anyhow::Result<()> {
+async fn exact_count_returns_last_events_in_order() -> anyhow::Result<()> {
     let count = 5;
     let setup = setup_latest_scanner(None, None, count, None, None).await?;
     let contract = setup.contract;
@@ -36,7 +36,7 @@ async fn latest_scanner_exact_count_returns_last_events_in_order() -> anyhow::Re
 }
 
 #[tokio::test]
-async fn latest_scanner_fewer_available_than_count_returns_all() -> anyhow::Result<()> {
+async fn fewer_available_than_count_returns_all() -> anyhow::Result<()> {
     let count = 5;
     let setup = setup_latest_scanner(None, None, count, None, None).await?;
     let contract = setup.contract;
@@ -64,7 +64,7 @@ async fn latest_scanner_fewer_available_than_count_returns_all() -> anyhow::Resu
 }
 
 #[tokio::test]
-async fn latest_scanner_no_past_events_returns_empty() -> anyhow::Result<()> {
+async fn no_past_events_returns_empty() -> anyhow::Result<()> {
     let count = 5;
     let setup = setup_latest_scanner(None, None, count, None, None).await?;
     let scanner = setup.scanner;
@@ -78,7 +78,7 @@ async fn latest_scanner_no_past_events_returns_empty() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn latest_scanner_respects_range_subset() -> anyhow::Result<()> {
+async fn respects_range_subset() -> anyhow::Result<()> {
     let (_anvil, provider, contract, default_filter) = setup_common(None, None).await?;
     // Mine 6 events, one per tx (auto-mined), then manually mint 2 empty blocks to widen range
     contract.increase().send().await?.watch().await?;
@@ -115,8 +115,7 @@ async fn latest_scanner_respects_range_subset() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn latest_scanner_multiple_listeners_to_same_event_receive_same_results() -> anyhow::Result<()>
-{
+async fn multiple_listeners_to_same_event_receive_same_results() -> anyhow::Result<()> {
     let count = 5;
     let setup = setup_latest_scanner(None, None, count, None, None).await?;
     let contract = setup.contract;
@@ -158,7 +157,7 @@ async fn latest_scanner_multiple_listeners_to_same_event_receive_same_results() 
 }
 
 #[tokio::test]
-async fn latest_scanner_different_filters_receive_different_results() -> anyhow::Result<()> {
+async fn different_filters_receive_different_results() -> anyhow::Result<()> {
     let count = 3;
     let setup = setup_latest_scanner(None, None, count, None, None).await?;
     let contract = setup.contract;
@@ -213,7 +212,7 @@ async fn latest_scanner_different_filters_receive_different_results() -> anyhow:
 }
 
 #[tokio::test]
-async fn latest_scanner_mixed_events_and_filters_return_correct_streams() -> anyhow::Result<()> {
+async fn mixed_events_and_filters_return_correct_streams() -> anyhow::Result<()> {
     let count = 2;
     let setup = setup_latest_scanner(Some(0.1), None, count, None, None).await?;
     let contract = setup.contract;
@@ -256,7 +255,7 @@ async fn latest_scanner_mixed_events_and_filters_return_correct_streams() -> any
 }
 
 #[tokio::test]
-async fn latest_scanner_ignores_non_tracked_contract() -> anyhow::Result<()> {
+async fn ignores_non_tracked_contract() -> anyhow::Result<()> {
     // Manual setup to deploy two contracts
     let setup = setup_latest_scanner(None, None, 5, None, None).await?;
     let provider = setup.provider;
@@ -291,7 +290,7 @@ async fn latest_scanner_ignores_non_tracked_contract() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn latest_scanner_large_gaps_and_empty_ranges() -> anyhow::Result<()> {
+async fn large_gaps_and_empty_ranges() -> anyhow::Result<()> {
     // Manual setup to mine empty blocks
     let (_anvil, provider, contract, default_filter) = setup_common(None, None).await?;
 
@@ -328,7 +327,7 @@ async fn latest_scanner_large_gaps_and_empty_ranges() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn latest_scanner_boundary_range_single_block() -> anyhow::Result<()> {
+async fn boundary_range_single_block() -> anyhow::Result<()> {
     let (_anvil, provider, contract, default_filter) = setup_common(None, None).await?;
 
     contract.increase().send().await?.watch().await?;
