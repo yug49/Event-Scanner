@@ -47,8 +47,8 @@
 //!                     }
 //!                 }
 //!             }
-//!             Message::Status(status) => {
-//!                 info!("Received status message: {:?}", status);
+//!             Message::Notification(notification) => {
+//!                 info!("Received notification: {:?}", notification);
 //!             }
 //!         }
 //!     }
@@ -70,7 +70,7 @@ use crate::{
     ScannerMessage,
     error::ScannerError,
     robust_provider::{Error as RobustProviderError, IntoRobustProvider, RobustProvider},
-    types::{ScannerStatus, TryStream},
+    types::{Notification, TryStream},
 };
 use alloy::{
     consensus::BlockHeader,
@@ -570,7 +570,7 @@ impl<N: Network> Service<N> {
             if reorged {
                 info!(block_number = %from, hash = %tip_hash, "Reorg detected");
 
-                if !sender.try_stream(ScannerStatus::ReorgDetected).await {
+                if !sender.try_stream(Notification::ReorgDetected).await {
                     break;
                 }
 
@@ -642,7 +642,7 @@ impl<N: Network> Service<N> {
             };
 
             next_start_block = if let Some(common_ancestor) = reorged_opt {
-                if !sender.try_stream(ScannerStatus::ReorgDetected).await {
+                if !sender.try_stream(Notification::ReorgDetected).await {
                     return None;
                 }
                 common_ancestor.header().number() + 1
@@ -657,6 +657,8 @@ impl<N: Network> Service<N> {
         }
     }
 
+    // TODO: refactor this function to reduce the number of arguments
+    #[allow(clippy::too_many_arguments)]
     async fn stream_live_blocks(
         stream_start: BlockNumber,
         subscription: Subscription<N::HeaderResponse>,
@@ -677,10 +679,8 @@ impl<N: Network> Service<N> {
             return;
         };
 
-        if notify {
-            if !sender.try_stream(ScannerStatus::StartingLiveStream).await {
-                return;
-            }
+        if notify && !sender.try_stream(Notification::StartingLiveStream).await {
+            return;
         }
 
         let incoming_block_num = incoming_block.number();
@@ -722,7 +722,7 @@ impl<N: Network> Service<N> {
             };
 
             if let Some(common_ancestor) = reorged_opt {
-                if !sender.try_stream(ScannerStatus::ReorgDetected).await {
+                if !sender.try_stream(Notification::ReorgDetected).await {
                     return;
                 }
                 // no need to stream blocks prior to the previously specified starting block
