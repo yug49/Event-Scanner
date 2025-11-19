@@ -425,11 +425,14 @@ impl<N: Network> Service<N> {
             });
 
             return Ok(());
+        } else if start_block < confirmed_tip {
+            info!(
+                start_block = start_block,
+                confirmed_tip = confirmed_tip,
+                "Start block is before confirmed tip, syncing historical data"
+            );
         }
 
-        info!(start_block = start_block, end_block = confirmed_tip, "Syncing historical data");
-
-        // This task runs independently, accumulating new blocks while wehistorical data is syncing
         tokio::spawn(async move {
             while start_block < confirmed_tip {
                 Self::stream_historical_blocks(
