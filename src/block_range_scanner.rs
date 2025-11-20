@@ -64,26 +64,28 @@ use tokio::{
     sync::{mpsc, oneshot},
     try_join,
 };
-use tokio_stream::{StreamExt, wrappers::ReceiverStream};
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     ScannerMessage,
+    block_range_scanner::sync_handler::SyncHandler,
     error::ScannerError,
     robust_provider::{Error as RobustProviderError, IntoRobustProvider, RobustProvider},
     types::{Notification, TryStream},
 };
 use alloy::{
     consensus::BlockHeader,
-    eips::{BlockId, BlockNumberOrTag},
+    eips::BlockId,
     network::{BlockResponse, Network, primitives::HeaderResponse},
     primitives::BlockNumber,
-    pubsub::Subscription,
     transports::{RpcError, TransportErrorKind},
 };
 use tracing::{debug, error, info, warn};
 
+mod common;
 mod reorg_handler;
 mod ring_buffer;
+mod sync_handler;
 
 use reorg_handler::ReorgHandler;
 
@@ -314,15 +316,15 @@ impl<N: Network> Service<N> {
         info!("WebSocket connected for live blocks");
 
         tokio::spawn(async move {
-            Self::stream_live_blocks(
+            common::stream_live_blocks(
                 range_start,
                 subscription,
-                sender,
+                &sender,
                 &provider,
                 block_confirmations,
                 max_block_range,
                 &mut reorg_handler,
-                false,
+                false, // (notification unnecessary)
             )
             .await;
         });
@@ -355,7 +357,7 @@ impl<N: Network> Service<N> {
         let mut reorg_handler = self.reorg_handler.clone();
 
         tokio::spawn(async move {
-            Self::stream_historical_blocks(
+            common::stream_historical_blocks(
                 start_block_num,
                 start_block_num,
                 end_block_num,
@@ -371,127 +373,19 @@ impl<N: Network> Service<N> {
     }
 
     async fn handle_sync(
-        &mut self,
+        &self,
         start_id: BlockId,
         block_confirmations: u64,
         sender: mpsc::Sender<Message>,
     ) -> Result<(), ScannerError> {
-        let provider = self.provider.clone();
-        let max_block_range = self.max_block_range;
-        let mut reorg_handler = self.reorg_handler.clone();
-
-        let get_start_block = async || -> Result<BlockNumber, ScannerError> {
-            let block = match start_id {
-                BlockId::Number(BlockNumberOrTag::Number(num)) => num,
-                _ => provider.get_block(start_id).await?.header().number(),
-            };
-            Ok(block)
-        };
-
-        let get_confirmed_tip = async || -> Result<BlockNumber, ScannerError> {
-            let confirmed_block = provider.get_latest_confirmed(block_confirmations).await?;
-            Ok(confirmed_block)
-        };
-
-        // Step 1:
-        // Fetches the starting block and confirmed tip for historical sync in parallel
-        let (mut start_block, mut confirmed_tip) =
-            tokio::try_join!(get_start_block(), get_confirmed_tip())?;
-
-        // If start is beyond confirmed tip, skip historical and go straight to live
-        if start_block > confirmed_tip {
-            info!(
-                start_block = start_block,
-                confirmed_tip = confirmed_tip,
-                "Start block is at or beyond confirmed tip, starting live stream"
-            );
-
-            let subscription: Subscription<<N as Network>::HeaderResponse> =
-                self.provider.subscribe_blocks().await?;
-
-            tokio::spawn(async move {
-                Self::stream_live_blocks(
-                    start_block,
-                    subscription,
-                    sender,
-                    &provider,
-                    block_confirmations,
-                    max_block_range,
-                    &mut reorg_handler,
-                    true,
-                )
-                .await;
-            });
-
-            return Ok(());
-        }
-
-        tokio::spawn(async move {
-            if start_block < confirmed_tip {
-                info!(
-                    start_block = start_block,
-                    confirmed_tip = confirmed_tip,
-                    "Start block is before confirmed tip, syncing historical data"
-                );
-
-                while start_block < confirmed_tip {
-                    Self::stream_historical_blocks(
-                        start_block,
-                        start_block,
-                        confirmed_tip,
-                        max_block_range,
-                        &sender,
-                        &provider,
-                        &mut reorg_handler,
-                    )
-                    .await;
-
-                    let latest = match provider.get_block_by_number(BlockNumberOrTag::Latest).await
-                    {
-                        Ok(block) => block.header().number(),
-                        Err(e) => {
-                            error!(error = %e, "Error latest block when calculating next historical batch, shutting down");
-                            _ = sender.try_stream(e).await;
-                            return;
-                        }
-                    };
-
-                    start_block = confirmed_tip + 1;
-                    confirmed_tip = latest.saturating_sub(block_confirmations);
-                }
-
-                info!("Chain tip reached, switching to live");
-            }
-
-            let subscription = match provider.subscribe_blocks().await {
-                Ok(sub) => sub,
-                Err(e) => {
-                    error!(error = %e, "Error subscribing to live blocks, shutting down");
-                    _ = sender.try_stream(e).await;
-                    return;
-                }
-            };
-
-            if !sender.try_stream(Notification::StartingLiveStream).await {
-                return;
-            }
-
-            info!("Successfully transitioned from historical to live data");
-
-            Self::stream_live_blocks(
-                start_block,
-                subscription,
-                sender,
-                &provider,
-                block_confirmations,
-                max_block_range,
-                &mut reorg_handler,
-                false,
-            )
-            .await;
-        });
-
-        Ok(())
+        let sync_handler = SyncHandler::new(
+            self.provider.clone(),
+            self.max_block_range,
+            start_id,
+            block_confirmations,
+            sender,
+        );
+        sync_handler.run().await
     }
 
     async fn handle_rewind(
@@ -608,182 +502,6 @@ impl<N: Network> Service<N> {
         }
 
         info!(batch_count = batch_count, "Rewind completed");
-    }
-
-    /// Assumes that `stream_start <= next_start_block <= end`.
-    async fn stream_historical_blocks(
-        stream_start: BlockNumber,
-        mut next_start_block: BlockNumber,
-        end: BlockNumber,
-        max_block_range: u64,
-        sender: &mpsc::Sender<Message>,
-        provider: &RobustProvider<N>,
-        reorg_handler: &mut ReorgHandler<N>,
-    ) -> Option<N::BlockResponse> {
-        let mut batch_count = 0;
-
-        loop {
-            let batch_end_num = next_start_block.saturating_add(max_block_range - 1).min(end);
-            let batch_end = match provider.get_block_by_number(batch_end_num.into()).await {
-                Ok(block) => block,
-                Err(e) => {
-                    error!(batch_start = next_start_block, batch_end = batch_end_num, error = %e, "Failed to get ending block of the current batch");
-                    _ = sender.try_stream(e).await;
-                    return None;
-                }
-            };
-
-            if !sender.try_stream(next_start_block..=batch_end_num).await {
-                return Some(batch_end);
-            }
-
-            batch_count += 1;
-            if batch_count % 10 == 0 {
-                debug!(batch_count = batch_count, "Processed historical batches");
-            }
-
-            let reorged_opt = match reorg_handler.check(&batch_end).await {
-                Ok(opt) => opt,
-                Err(e) => {
-                    error!(error = %e, "Failed to perform reorg check");
-                    _ = sender.try_stream(e).await;
-                    return None;
-                }
-            };
-
-            next_start_block = if let Some(common_ancestor) = reorged_opt {
-                if !sender.try_stream(Notification::ReorgDetected).await {
-                    return None;
-                }
-                if common_ancestor.header().number() < stream_start {
-                    stream_start
-                } else {
-                    common_ancestor.header().number() + 1
-                }
-            } else {
-                batch_end_num.saturating_add(1)
-            };
-
-            if next_start_block > end {
-                info!(batch_count = batch_count, "Historical sync completed");
-                return Some(batch_end);
-            }
-        }
-    }
-
-    // TODO: refactor this function to reduce the number of arguments
-    #[allow(clippy::too_many_arguments)]
-    async fn stream_live_blocks(
-        stream_start: BlockNumber,
-        subscription: Subscription<N::HeaderResponse>,
-        sender: mpsc::Sender<Message>,
-        provider: &RobustProvider<N>,
-        block_confirmations: u64,
-        max_block_range: u64,
-        reorg_handler: &mut ReorgHandler<N>,
-        notify_after_first_block: bool,
-    ) {
-        // ensure we start streaming only after the specified starting block
-        let mut stream = subscription.into_stream().skip_while(|header| {
-            header.number().saturating_sub(block_confirmations) < stream_start
-        });
-
-        let Some(incoming_block) = stream.next().await else {
-            warn!("Subscription channel closed");
-            return;
-        };
-
-        if notify_after_first_block && !sender.try_stream(Notification::StartingLiveStream).await {
-            return;
-        }
-
-        let incoming_block_num = incoming_block.number();
-        info!(block_number = incoming_block_num, "Received block header");
-
-        let confirmed = incoming_block_num.saturating_sub(block_confirmations);
-
-        let mut previous_batch_end = Self::stream_historical_blocks(
-            stream_start,
-            stream_start,
-            confirmed,
-            max_block_range,
-            &sender,
-            provider,
-            reorg_handler,
-        )
-        .await;
-
-        if previous_batch_end.is_none() {
-            // the sender channel is closed
-            return;
-        }
-
-        let mut batch_start = stream_start;
-
-        while let Some(incoming_block) = stream.next().await {
-            let incoming_block_num = incoming_block.number();
-            info!(block_number = incoming_block_num, "Received block header");
-
-            let reorged_opt = match previous_batch_end.as_ref() {
-                None => None,
-                Some(batch_end) => match reorg_handler.check(batch_end).await {
-                    Ok(opt) => opt,
-                    Err(e) => {
-                        error!(error = %e, "Failed to perform reorg check");
-                        _ = sender.try_stream(e).await;
-                        return;
-                    }
-                },
-            };
-
-            if let Some(common_ancestor) = reorged_opt {
-                if !sender.try_stream(Notification::ReorgDetected).await {
-                    return;
-                }
-                // no need to stream blocks prior to the previously specified starting block
-                if common_ancestor.header().number() < stream_start {
-                    batch_start = stream_start;
-                    previous_batch_end = None;
-                } else {
-                    batch_start = common_ancestor.header().number() + 1;
-                    previous_batch_end = Some(common_ancestor);
-                }
-
-                // TODO: explain in docs that the returned block after a reorg will be the
-                // first confirmed block that is smaller between:
-                // - the first post-reorg block
-                // - the previous range_start
-            } else {
-                // no reorg happened, move the block range back to expected next start
-                //
-                // SAFETY: Overflow cannot realistically happen
-                if let Some(prev_batch_end) = previous_batch_end.as_ref() {
-                    batch_start = prev_batch_end.header().number() + 1;
-                }
-            }
-
-            let batch_end_num = incoming_block_num.saturating_sub(block_confirmations);
-            if batch_end_num >= batch_start {
-                previous_batch_end = Self::stream_historical_blocks(
-                    stream_start,
-                    batch_start,
-                    batch_end_num,
-                    max_block_range,
-                    &sender,
-                    provider,
-                    reorg_handler,
-                )
-                .await;
-
-                if previous_batch_end.is_none() {
-                    // the sender channel is closed
-                    return;
-                }
-
-                // SAFETY: Overflow cannot realistically happen
-                batch_start = batch_end_num + 1;
-            }
-        }
     }
 }
 
