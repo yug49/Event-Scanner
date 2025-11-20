@@ -214,7 +214,7 @@ async fn different_filters_receive_different_results() -> anyhow::Result<()> {
 #[tokio::test]
 async fn mixed_events_and_filters_return_correct_streams() -> anyhow::Result<()> {
     let count = 2;
-    let setup = setup_latest_scanner(Some(0.1), None, count, None, None).await?;
+    let setup = setup_latest_scanner(None, None, count, None, None).await?;
     let contract = setup.contract;
     let mut scanner = setup.scanner;
     let mut stream_inc = setup.stream; // CountIncreased by default
