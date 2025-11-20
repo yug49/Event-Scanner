@@ -1,4 +1,7 @@
+use std::time::Duration;
+
 use alloy::{primitives::U256, providers::ext::AnvilApi};
+use tokio::time::sleep;
 
 use crate::common::{TestCounter, setup_sync_from_latest_scanner};
 use event_scanner::{Notification, assert_empty, assert_event_sequence_final, assert_next};
@@ -131,6 +134,9 @@ async fn no_historical_only_live_streams() -> anyhow::Result<()> {
     let mut stream = setup.stream;
 
     scanner.start().await?;
+
+    // give scanner time to start
+    sleep(Duration::from_millis(10)).await;
 
     // Live events arrive
     contract.increase().send().await?.watch().await?;
