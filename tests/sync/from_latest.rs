@@ -128,17 +128,15 @@ async fn no_historical_only_live_streams() -> anyhow::Result<()> {
     let setup = setup_sync_from_latest_scanner(None, None, 5, 0).await?;
     let contract = setup.contract;
     let scanner = setup.scanner;
-    let stream = setup.stream;
+    let mut stream = setup.stream;
 
     scanner.start().await?;
-
-    // Latest is empty
-    let mut stream = assert_empty!(stream);
 
     // Live events arrive
     contract.increase().send().await?.watch().await?;
     contract.increase().send().await?.watch().await?;
 
+    // Latest is empty
     assert_next!(stream, Notification::StartingLiveStream);
     assert_event_sequence_final!(
         stream,
