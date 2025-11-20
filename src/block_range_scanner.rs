@@ -313,6 +313,11 @@ impl<N: Network> Service<N> {
 
         info!("WebSocket connected for live blocks");
 
+        if !sender.try_stream(Notification::StartingLiveStream).await {
+            // TODO: return a new "ReceiverDropped" error?
+            return Ok(());
+        }
+
         tokio::spawn(async move {
             Self::stream_live_blocks(
                 range_start,
@@ -469,6 +474,10 @@ impl<N: Network> Service<N> {
                 }
             };
 
+            if !sender.try_stream(Notification::StartingLiveStream).await {
+                return;
+            }
+
             info!("Successfully transitioned from historical to live data");
 
             Self::stream_live_blocks(
@@ -479,7 +488,7 @@ impl<N: Network> Service<N> {
                 block_confirmations,
                 max_block_range,
                 &mut reorg_handler,
-                true,
+                false,
             )
             .await;
         });
