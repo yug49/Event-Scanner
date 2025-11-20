@@ -51,27 +51,22 @@ async fn live_mode_processes_all_blocks_respecting_block_confirmations() -> anyh
 async fn live_with_block_confirmations_always_emits_genesis_block() -> anyhow::Result<()> {
     let anvil = Anvil::new().try_spawn()?;
     let provider = ProviderBuilder::new().connect(anvil.ws_endpoint_url().as_str()).await?;
-
     let client = BlockRangeScanner::new().connect(provider.clone()).await?.run()?;
 
     let mut stream = client.stream_live(3).await?;
 
     provider.anvil_mine(Some(1), None).await?;
-
     assert_next!(stream, 0..=0);
     let stream = assert_empty!(stream);
 
     provider.anvil_mine(Some(2), None).await?;
-
     let mut stream = assert_empty!(stream);
 
     provider.anvil_mine(Some(5), None).await?;
-
     assert_range_coverage!(stream, 1..=5);
     let mut stream = assert_empty!(stream);
 
     provider.anvil_mine(Some(1), None).await?;
-
     assert_next!(stream, 6..=6);
     assert_empty!(stream);
 
