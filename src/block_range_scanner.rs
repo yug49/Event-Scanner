@@ -47,8 +47,8 @@
 //!                     }
 //!                 }
 //!             }
-//!             Message::Status(status) => {
-//!                 info!("Received status message: {:?}", status);
+//!             Message::Notification(notification) => {
+//!                 info!("Received notification: {:?}", notification);
 //!             }
 //!         }
 //!     }
@@ -71,7 +71,7 @@ use crate::{
     ScannerMessage,
     error::ScannerError,
     robust_provider::{Error as RobustProviderError, IntoRobustProvider, RobustProvider},
-    types::{ScannerStatus, TryStream},
+    types::{Notification, TryStream},
 };
 use alloy::{
     consensus::BlockHeader,
@@ -436,7 +436,7 @@ impl<N: Network> Service<N> {
 
             info!("Chain tip reached, switching to live");
 
-            if !sender.try_stream(ScannerStatus::SwitchingToLive).await {
+            if !sender.try_stream(Notification::SwitchingToLive).await {
                 return;
             }
 
@@ -533,7 +533,7 @@ impl<N: Network> Service<N> {
                 }
                 Err(e) => {
                     error!(error = %e, "Terminal RPC call error, shutting down");
-                    _ = sender.try_stream(e);
+                    _ = sender.try_stream(e).await;
                     return;
                 }
             };
@@ -541,7 +541,7 @@ impl<N: Network> Service<N> {
             if reorged {
                 info!(block_number = %from, hash = %tip_hash, "Reorg detected");
 
-                if !sender.try_stream(ScannerStatus::ReorgDetected).await {
+                if !sender.try_stream(Notification::ReorgDetected).await {
                     break;
                 }
 
@@ -555,7 +555,7 @@ impl<N: Network> Service<N> {
                     }
                     Err(e) => {
                         error!(error = %e, "Terminal RPC call error, shutting down");
-                        _ = sender.try_stream(e);
+                        _ = sender.try_stream(e).await;
                         return;
                     }
                 };
@@ -637,7 +637,7 @@ impl<N: Network> Service<N> {
 
             if incoming_block_num < range_start {
                 warn!("Reorg detected: sending forked range");
-                if !sender.try_stream(ScannerStatus::ReorgDetected).await {
+                if !sender.try_stream(Notification::ReorgDetected).await {
                     return;
                 }
 
@@ -697,7 +697,7 @@ impl<N: Network> Service<N> {
                     }
                 }
                 other => {
-                    // Could be error or status
+                    // Could be error or notification
                     if !sender.try_stream(other).await {
                         break;
                     }
