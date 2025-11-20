@@ -502,6 +502,7 @@ impl<N: Network> Service<N> {
     ) -> Result<(), ScannerError> {
         let max_block_range = self.max_block_range;
         let provider = self.provider.clone();
+        let mut reorg_handler = self.reorg_handler.clone();
 
         let (start_block, end_block) = try_join!(
             self.provider.get_block_by_number(start_height),
@@ -515,7 +516,8 @@ impl<N: Network> Service<N> {
         };
 
         tokio::spawn(async move {
-            Self::stream_rewind(from, to, max_block_range, &sender, &provider).await;
+            Self::stream_rewind(from, to, max_block_range, &sender, &provider, &mut reorg_handler)
+                .await;
         });
 
         Ok(())
@@ -534,11 +536,12 @@ impl<N: Network> Service<N> {
         max_block_range: u64,
         sender: &mpsc::Sender<Message>,
         provider: &RobustProvider<N>,
+        reorg_handler: &mut ReorgHandler<N>,
     ) {
         let mut batch_count = 0;
 
         // for checking whether reorg occurred
-        let mut tip_hash = from.header().hash();
+        let mut tip = from;
 
         let from = from.header().number();
         let to = to.header().number();
@@ -565,10 +568,10 @@ impl<N: Network> Service<N> {
                 break;
             }
 
-            let reorged = match reorg_detected(provider, tip_hash).await {
-                Ok(detected) => {
-                    info!(block_number = %from, hash = %tip_hash, "Reorg detected");
-                    detected
+            let reorged_opt = match reorg_handler.check(&tip).await {
+                Ok(opt) => {
+                    info!(block_number = %from, hash = %tip.header().hash(), "Reorg detected");
+                    opt
                 }
                 Err(e) => {
                     error!(error = %e, "Terminal RPC call error, shutting down");
@@ -577,8 +580,8 @@ impl<N: Network> Service<N> {
                 }
             };
 
-            if reorged {
-                info!(block_number = %from, hash = %tip_hash, "Reorg detected");
+            if let Some(common_ancestor) = reorged_opt {
+                info!(block_number = %from, hash = %tip.header().hash(), "Reorg detected");
 
                 if !sender.try_stream(Notification::ReorgDetected).await {
                     break;
@@ -587,8 +590,8 @@ impl<N: Network> Service<N> {
                 // restart rewind
                 batch_from = from;
                 // store the updated end block hash
-                tip_hash = match provider.get_block_by_number(from.into()).await {
-                    Ok(block) => block.header().hash(),
+                tip = match provider.get_block_by_number(from.into()).await {
+                    Ok(block) => block,
                     Err(RobustProviderError::BlockNotFound(_)) => {
                         panic!("Block with number '{from}' should exist post-reorg");
                     }
