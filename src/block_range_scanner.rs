@@ -359,6 +359,7 @@ impl<N: Network> Service<N> {
         tokio::spawn(async move {
             Self::stream_historical_blocks(
                 start_block_num,
+                start_block_num,
                 end_block_num,
                 max_block_range,
                 &sender,
@@ -437,6 +438,7 @@ impl<N: Network> Service<N> {
 
                 while start_block < confirmed_tip {
                     Self::stream_historical_blocks(
+                        start_block,
                         start_block,
                         confirmed_tip,
                         max_block_range,
@@ -613,7 +615,8 @@ impl<N: Network> Service<N> {
     }
 
     async fn stream_historical_blocks(
-        start: BlockNumber,
+        stream_start: BlockNumber,
+        mut next_start_block: BlockNumber,
         end: BlockNumber,
         max_block_range: u64,
         sender: &mpsc::Sender<Message>,
@@ -621,8 +624,6 @@ impl<N: Network> Service<N> {
         reorg_handler: &mut ReorgHandler<N>,
     ) -> Option<N::BlockResponse> {
         let mut batch_count = 0;
-
-        let mut next_start_block = start;
 
         // must be <= to include the edge case when start == end (i.e. return the single block
         // range)
@@ -659,8 +660,8 @@ impl<N: Network> Service<N> {
                 if !sender.try_stream(Notification::ReorgDetected).await {
                     return None;
                 }
-                if common_ancestor.header().number() < start {
-                    start
+                if common_ancestor.header().number() < stream_start {
+                    stream_start
                 } else {
                     common_ancestor.header().number() + 1
                 }
@@ -707,6 +708,7 @@ impl<N: Network> Service<N> {
         let confirmed = incoming_block_num.saturating_sub(block_confirmations);
 
         let mut previous_batch_end = Self::stream_historical_blocks(
+            stream_start,
             stream_start,
             confirmed,
             max_block_range,
@@ -768,6 +770,7 @@ impl<N: Network> Service<N> {
             let batch_end_num = incoming_block_num.saturating_sub(block_confirmations);
             if batch_end_num >= batch_start {
                 previous_batch_end = Self::stream_historical_blocks(
+                    stream_start,
                     batch_start,
                     batch_end_num,
                     max_block_range,
