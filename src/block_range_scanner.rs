@@ -313,11 +313,6 @@ impl<N: Network> Service<N> {
 
         info!("WebSocket connected for live blocks");
 
-        if !sender.try_stream(Notification::StartingLiveStream).await {
-            // TODO: return a new "ReceiverDropped" error?
-            return Ok(());
-        }
-
         tokio::spawn(async move {
             Self::stream_live_blocks(
                 range_start,
@@ -430,40 +425,43 @@ impl<N: Network> Service<N> {
             });
 
             return Ok(());
-        } else if start_block < confirmed_tip {
-            info!(
-                start_block = start_block,
-                confirmed_tip = confirmed_tip,
-                "Start block is before confirmed tip, syncing historical data"
-            );
         }
 
         tokio::spawn(async move {
-            while start_block < confirmed_tip {
-                Self::stream_historical_blocks(
-                    start_block,
-                    confirmed_tip,
-                    max_block_range,
-                    &sender,
-                    &provider,
-                    &mut reorg_handler,
-                )
-                .await;
+            if start_block < confirmed_tip {
+                info!(
+                    start_block = start_block,
+                    confirmed_tip = confirmed_tip,
+                    "Start block is before confirmed tip, syncing historical data"
+                );
 
-                let latest = match provider.get_block_by_number(BlockNumberOrTag::Latest).await {
-                    Ok(block) => block.header().number(),
-                    Err(e) => {
-                        error!(error = %e, "Error latest block when calculating next historical batch, shutting down");
-                        _ = sender.try_stream(e).await;
-                        return;
-                    }
-                };
+                while start_block < confirmed_tip {
+                    Self::stream_historical_blocks(
+                        start_block,
+                        confirmed_tip,
+                        max_block_range,
+                        &sender,
+                        &provider,
+                        &mut reorg_handler,
+                    )
+                    .await;
 
-                start_block = confirmed_tip + 1;
-                confirmed_tip = latest.saturating_sub(block_confirmations);
+                    let latest = match provider.get_block_by_number(BlockNumberOrTag::Latest).await
+                    {
+                        Ok(block) => block.header().number(),
+                        Err(e) => {
+                            error!(error = %e, "Error latest block when calculating next historical batch, shutting down");
+                            _ = sender.try_stream(e).await;
+                            return;
+                        }
+                    };
+
+                    start_block = confirmed_tip + 1;
+                    confirmed_tip = latest.saturating_sub(block_confirmations);
+                }
+
+                info!("Chain tip reached, switching to live");
             }
-
-            info!("Chain tip reached, switching to live");
 
             let subscription = match provider.subscribe_blocks().await {
                 Ok(sub) => sub,
@@ -679,7 +677,7 @@ impl<N: Network> Service<N> {
         block_confirmations: u64,
         max_block_range: u64,
         reorg_handler: &mut ReorgHandler<N>,
-        notify: bool,
+        notify_after_first_block: bool,
     ) {
         // ensure we start streaming only after the specified starting block
         let mut stream = subscription.into_stream().skip_while(|header| {
@@ -691,7 +689,7 @@ impl<N: Network> Service<N> {
             return;
         };
 
-        if notify && !sender.try_stream(Notification::StartingLiveStream).await {
+        if notify_after_first_block && !sender.try_stream(Notification::StartingLiveStream).await {
             return;
         }
 
