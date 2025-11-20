@@ -33,12 +33,15 @@ async fn happy_path_no_duplicates() -> anyhow::Result<()> {
             TestCounter::CountIncreased { newCount: U256::from(6) },
         ]
     );
+    let mut stream = assert_empty!(stream);
 
     // Live phase: emit three more, should arrive in order without duplicating latest
     contract.increase().send().await?.watch().await?;
     contract.increase().send().await?.watch().await?;
 
-    // Transition to live
+    // Assert `StartingLiveStream` after emitting live events, because the test finishes the "latest
+    // events" phase before new events are emitted, thus the "live" phase actually starts from a
+    // future block.
     assert_next!(stream, Notification::StartingLiveStream);
     assert_event_sequence_final!(
         stream,
@@ -78,6 +81,9 @@ async fn fewer_historical_then_continues_live() -> anyhow::Result<()> {
     contract.increase().send().await?.watch().await?;
     contract.increase().send().await?.watch().await?;
 
+    // Assert `StartingLiveStream` after emitting live events, because the test finishes the "latest
+    // events" phase before new events are emitted, thus the "live" phase actually starts from a
+    // future block.
     assert_next!(stream, Notification::StartingLiveStream);
     assert_event_sequence_final!(
         stream,
@@ -119,6 +125,9 @@ async fn exact_historical_count_then_live() -> anyhow::Result<()> {
     // Live continues
     contract.increase().send().await?.watch().await?;
 
+    // Assert `StartingLiveStream` after emitting live events, because the test finishes the "latest
+    // events" phase before new events are emitted, thus the "live" phase actually starts from a
+    // future block.
     assert_next!(stream, Notification::StartingLiveStream);
     assert_next!(stream, &[TestCounter::CountIncreased { newCount: U256::from(5) }]);
     assert_empty!(stream);
@@ -142,7 +151,11 @@ async fn no_historical_only_live_streams() -> anyhow::Result<()> {
     contract.increase().send().await?.watch().await?;
     contract.increase().send().await?.watch().await?;
 
-    // Latest is empty
+    // Latest events are empty
+
+    // Assert `StartingLiveStream` after emitting live events, because the test finishes the "latest
+    // events" phase before new events are emitted, thus the "live" phase actually starts from a
+    // future block.
     assert_next!(stream, Notification::StartingLiveStream);
     assert_event_sequence_final!(
         stream,
@@ -189,6 +202,9 @@ async fn block_gaps_do_not_affect_number_of_events_streamed() -> anyhow::Result<
     // Immediately produce a new live event in a new block
     contract.increase().send().await?.watch().await?;
 
+    // Assert `StartingLiveStream` after emitting live events, because the test finishes the "latest
+    // events" phase before new events are emitted, thus the "live" phase actually starts from a
+    // future block.
     assert_next!(stream, Notification::StartingLiveStream);
     assert_next!(stream, &[TestCounter::CountIncreased { newCount: U256::from(4) }]);
     assert_empty!(stream);
