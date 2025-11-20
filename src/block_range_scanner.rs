@@ -614,6 +614,7 @@ impl<N: Network> Service<N> {
         info!(batch_count = batch_count, "Rewind completed");
     }
 
+    /// Assumes that `stream_start <= next_start_block <= end`.
     async fn stream_historical_blocks(
         stream_start: BlockNumber,
         mut next_start_block: BlockNumber,
@@ -625,8 +626,6 @@ impl<N: Network> Service<N> {
     ) -> Option<N::BlockResponse> {
         let mut batch_count = 0;
 
-        // must be <= to include the edge case when start == end (i.e. return the single block
-        // range)
         loop {
             let batch_end_num = next_start_block.saturating_add(max_block_range - 1).min(end);
             let batch_end = match provider.get_block_by_number(batch_end_num.into()).await {
