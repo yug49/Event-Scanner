@@ -659,7 +659,11 @@ impl<N: Network> Service<N> {
                 if !sender.try_stream(Notification::ReorgDetected).await {
                     return None;
                 }
-                common_ancestor.header().number() + 1
+                if common_ancestor.header().number() < start {
+                    start
+                } else {
+                    common_ancestor.header().number() + 1
+                }
             } else {
                 batch_end_num.saturating_add(1)
             };
