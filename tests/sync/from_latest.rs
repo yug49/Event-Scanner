@@ -122,6 +122,9 @@ async fn exact_historical_count_then_live() -> anyhow::Result<()> {
     );
     let mut stream = assert_empty!(stream);
 
+    // give scanner time to subscribe to live events
+    sleep(Duration::from_millis(10)).await;
+
     // Live continues
     contract.increase().send().await?.watch().await?;
 
