@@ -31,9 +31,10 @@ impl<N: Network> ReorgHandler<N> {
         let block = block.header();
         info!(block_hash = %block.hash(), block_number = block.number(), "Checking if block was reorged");
         if !self.reorg_detected(block).await? {
-            info!(block_hash = %block.hash(), block_number = block.number(), "No reorg detected");
+            let hash = block.hash();
+            info!(block_hash = %hash, block_number = block.number(), "No reorg detected");
             // store the incoming block's hash for future reference
-            self.buffer.push(block.hash());
+            self.buffer.push(hash);
             return Ok(None);
         }
 
