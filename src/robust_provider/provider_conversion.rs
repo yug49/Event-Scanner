@@ -11,9 +11,7 @@ use alloy::{
 use crate::robust_provider::{Error, RobustProvider, RobustProviderBuilder};
 
 pub trait IntoProvider<N: Network = Ethereum> {
-    fn into_provider(
-        self,
-    ) -> impl std::future::Future<Output = Result<impl Provider<N>, Error>> + Send;
+    fn into_provider(self) -> impl Future<Output = Result<impl Provider<N>, Error>> + Send;
 }
 
 impl<N: Network> IntoProvider<N> for RobustProvider<N> {
@@ -81,9 +79,7 @@ where
 }
 
 pub trait IntoRobustProvider<N: Network = Ethereum> {
-    fn into_robust_provider(
-        self,
-    ) -> impl std::future::Future<Output = Result<RobustProvider<N>, Error>> + Send;
+    fn into_robust_provider(self) -> impl Future<Output = Result<RobustProvider<N>, Error>> + Send;
 }
 
 impl<N: Network, P: IntoProvider<N> + Send> IntoRobustProvider<N> for P {

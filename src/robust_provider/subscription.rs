@@ -63,7 +63,7 @@ impl<N: Network> RobustSubscription<N> {
     pub async fn recv(&mut self) -> Result<N::HeaderResponse, Error> {
         let subscription_timeout = self.robust_provider.subscription_timeout;
         loop {
-            self.try_reconnect_to_primary().await;
+            self.try_reconnect_to_primary(false).await;
 
             if let Some(subscription) = &mut self.subscription {
                 let recv_result = timeout(subscription_timeout, subscription.recv()).await;
@@ -83,10 +83,10 @@ impl<N: Network> RobustSubscription<N> {
                             "Subscription timeout - no block received, switching provider"
                         );
 
-                        // If we're on a fallback, try reconnecting to primary one more time
-                        // before switching to the next fallback
+                        // If we're on a fallback, force reconnect to primary
+                        // before switching to the next fallback (bypassing reconnect interval)
                         if self.current_fallback_index.is_some() &&
-                            self.try_reconnect_to_primary().await
+                            self.try_reconnect_to_primary(true).await
                         {
                             continue;
                         }
@@ -129,12 +129,15 @@ impl<N: Network> RobustSubscription<N> {
 
     /// Try to reconnect to the primary provider if enough time has elapsed.
     /// Returns true if reconnection was successful, false if it's not time yet or if it failed.
-    async fn try_reconnect_to_primary(&mut self) -> bool {
+    async fn try_reconnect_to_primary(&mut self, force: bool) -> bool {
         // Check if we should attempt reconnection
-        let should_reconnect = match self.last_reconnect_attempt {
-            None => false,
-            Some(last_attempt) => last_attempt.elapsed() >= self.robust_provider.reconnect_interval,
-        };
+        let should_reconnect = force ||
+            match self.last_reconnect_attempt {
+                None => false,
+                Some(last_attempt) => {
+                    last_attempt.elapsed() >= self.robust_provider.reconnect_interval
+                }
+            };
 
         if !should_reconnect {
             return false;
