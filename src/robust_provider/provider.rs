@@ -1,9 +1,9 @@
 use std::{fmt::Debug, time::Duration};
 
 use alloy::{
-    self,
-    eips::BlockNumberOrTag,
+    eips::{BlockId, BlockNumberOrTag},
     network::{Ethereum, Network},
+    primitives::BlockHash,
     providers::{Provider, RootProvider},
     rpc::types::{Filter, Log},
     transports::{RpcError, TransportErrorKind},
@@ -36,7 +36,7 @@ impl<N: Network> RobustProvider<N> {
         &self.primary_provider
     }
 
-    /// Fetch a block by number with retry and timeout.
+    /// Fetch a block by [`BlockNumberOrTag`] with retry and timeout.
     ///
     /// # Errors
     ///
@@ -57,6 +57,22 @@ impl<N: Network> RobustProvider<N> {
         }
 
         result?.ok_or_else(|| Error::BlockNotFound(number.into()))
+    }
+
+    /// Fetch a block number by [`BlockId`]  with retry and timeout.
+    ///
+    /// # Errors
+    ///
+    /// See [retry errors](#retry-errors).
+    pub async fn get_block(&self, id: BlockId) -> Result<N::BlockResponse, Error> {
+        info!("eth_getBlock called");
+        let result = self
+            .retry_with_total_timeout(|provider| async move { provider.get_block(id).await }, false)
+            .await;
+        if let Err(e) = &result {
+            error!(error = %e, "eth_getByBlockNumber failed");
+        }
+        result?.ok_or_else(|| Error::BlockNotFound(id))
     }
 
     /// Fetch the latest block number with retry and timeout.
@@ -98,15 +114,12 @@ impl<N: Network> RobustProvider<N> {
         Ok(confirmed_block)
     }
 
-    /// Fetch a block by hash with retry and timeout.
+    /// Fetch a block by [`BlockHash`] with retry and timeout.
     ///
     /// # Errors
     ///
     /// See [retry errors](#retry-errors).
-    pub async fn get_block_by_hash(
-        &self,
-        hash: alloy::primitives::BlockHash,
-    ) -> Result<N::BlockResponse, Error> {
+    pub async fn get_block_by_hash(&self, hash: BlockHash) -> Result<N::BlockResponse, Error> {
         info!("eth_getBlockByHash called");
         let result = self
             .try_operation_with_failover(
@@ -121,7 +134,7 @@ impl<N: Network> RobustProvider<N> {
         result?.ok_or_else(|| Error::BlockNotFound(hash.into()))
     }
 
-    /// Fetch logs for the given filter with retry and timeout.
+    /// Fetch logs for the given [`Filter`] with retry and timeout.
     ///
     /// # Errors
     ///
