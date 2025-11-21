@@ -473,7 +473,7 @@ impl<N: Network> Service<N> {
             };
 
             // for now we only care if a reorg occurred, not which block it was
-            if let Some(_) = reorged_opt {
+            if reorged_opt.is_some() {
                 info!(block_number = %from, hash = %tip.header().hash(), "Reorg detected");
 
                 if !sender.try_stream(Notification::ReorgDetected).await {

@@ -38,7 +38,7 @@ pub(crate) async fn stream_live_blocks<N: Network>(
     }
 
     // Phase 2: Initialize streaming state with first block
-    let mut state = match initialize_live_streaming_state(
+    let Some(mut state) = initialize_live_streaming_state(
         first_block,
         stream_start,
         block_confirmations,
@@ -48,9 +48,8 @@ pub(crate) async fn stream_live_blocks<N: Network>(
         reorg_handler,
     )
     .await
-    {
-        Some(state) => state,
-        None => return, // Channel closed
+    else {
+        return;
     };
 
     // Phase 3: Continuously stream blocks with reorg handling
@@ -115,6 +114,7 @@ async fn initialize_live_streaming_state<N: Network>(
 }
 
 /// Continuously streams blocks, handling reorgs as they occur
+#[allow(clippy::too_many_arguments)]
 async fn stream_blocks_continuously<
     N: Network,
     S: tokio_stream::Stream<Item = N::HeaderResponse> + Unpin,
@@ -133,11 +133,11 @@ async fn stream_blocks_continuously<
         info!(block_number = incoming_block_num, "Received block header");
 
         // Check for reorgs and update state accordingly
-        let common_ancestor =
-            match check_for_reorg(&state.previous_batch_end, reorg_handler, sender).await {
-                Some(common_ancestor_opt) => common_ancestor_opt,
-                None => return,
-            };
+        let Some(common_ancestor) =
+            check_for_reorg(state.previous_batch_end.as_ref(), reorg_handler, sender).await
+        else {
+            return;
+        };
 
         if let Some(common_ancestor) = common_ancestor {
             if !handle_reorg_detected(common_ancestor, stream_start, state, sender).await {
@@ -169,11 +169,11 @@ async fn stream_blocks_continuously<
 /// Checks if a reorg occurred by verifying the previous batch end block.
 /// Returns `None` if the channel is closed.
 async fn check_for_reorg<N: Network>(
-    previous_batch_end: &Option<N::BlockResponse>,
+    previous_batch_end: Option<&N::BlockResponse>,
     reorg_handler: &mut ReorgHandler<N>,
     sender: &mpsc::Sender<Message>,
 ) -> Option<Option<N::BlockResponse>> {
-    let batch_end = previous_batch_end.as_ref()?;
+    let batch_end = previous_batch_end?;
 
     match reorg_handler.check(batch_end).await {
         Ok(reorg_opt) => Some(reorg_opt),
@@ -219,7 +219,7 @@ async fn handle_reorg_detected<N: Network>(
     true
 }
 
-/// Advances batch_start after processing a normal (non-reorg) block
+/// Advances `batch_start` after processing a normal (non-reorg) block
 fn advance_batch_start_after_previous_end<N: Network>(state: &mut LiveStreamingState<N>) {
     if let Some(prev_batch_end) = state.previous_batch_end.as_ref() {
         state.batch_start = prev_batch_end.header().number() + 1;

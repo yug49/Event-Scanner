@@ -47,7 +47,7 @@ impl<N: Network> SyncHandler<N> {
                     start_block = start_block,
                     "Start block is beyond confirmed tip, waiting until starting block is confirmed before starting live stream"
                 );
-                self.spawn_live_only(start_block).await
+                self.spawn_live_only(start_block).await?;
             }
             SyncState::NeedsCatchup { start_block, confirmed_tip } => {
                 info!(
@@ -55,9 +55,11 @@ impl<N: Network> SyncHandler<N> {
                     confirmed_tip = confirmed_tip,
                     "Start block is behind confirmed tip, catching up then transitioning to live"
                 );
-                self.spawn_catchup_then_live(start_block, confirmed_tip).await
+                self.spawn_catchup_then_live(start_block, confirmed_tip);
             }
         }
+
+        Ok(())
     }
 
     /// Determines whether we need to catch up or can start live immediately
@@ -102,11 +104,7 @@ impl<N: Network> SyncHandler<N> {
     }
 
     /// Spawns a task that catches up on historical blocks, then transitions to live streaming
-    async fn spawn_catchup_then_live(
-        &self,
-        start_block: BlockNumber,
-        confirmed_tip: BlockNumber,
-    ) -> Result<(), ScannerError> {
+    fn spawn_catchup_then_live(&self, start_block: BlockNumber, confirmed_tip: BlockNumber) {
         let max_block_range = self.max_block_range;
         let block_confirmations = self.block_confirmations;
         let provider = self.provider.clone();
@@ -145,8 +143,6 @@ impl<N: Network> SyncHandler<N> {
             )
             .await;
         });
-
-        Ok(())
     }
 
     /// Catches up on historical blocks until we reach the chain tip
@@ -211,7 +207,7 @@ impl<N: Network> SyncHandler<N> {
             start_block,
             subscription,
             sender,
-            &provider,
+            provider,
             block_confirmations,
             max_block_range,
             reorg_handler,
