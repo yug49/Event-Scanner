@@ -67,7 +67,10 @@ impl<N: Network> RobustProvider<N> {
     pub async fn get_block(&self, id: BlockId) -> Result<N::BlockResponse, Error> {
         info!("eth_getBlock called");
         let result = self
-            .retry_with_total_timeout(|provider| async move { provider.get_block(id).await }, false)
+            .try_operation_with_failover(
+                |provider| async move { provider.get_block(id).await },
+                false,
+            )
             .await;
         if let Err(e) = &result {
             error!(error = %e, "eth_getByBlockNumber failed");
