@@ -2,7 +2,7 @@ use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
 use crate::{
-    block_range_scanner::{Message, reorg_handler::ReorgHandler},
+    block_range_scanner::{BlockScannerResult, reorg_handler::ReorgHandler},
     robust_provider::RobustProvider,
     types::{Notification, TryStream},
 };
@@ -18,7 +18,7 @@ use tracing::{debug, error, info, warn};
 pub(crate) async fn stream_live_blocks<N: Network>(
     stream_start: BlockNumber,
     subscription: Subscription<N::HeaderResponse>,
-    sender: &mpsc::Sender<Message>,
+    sender: &mpsc::Sender<BlockScannerResult>,
     provider: &RobustProvider<N>,
     block_confirmations: u64,
     max_block_range: u64,
@@ -86,7 +86,7 @@ async fn initialize_live_streaming_state<N: Network>(
     stream_start: BlockNumber,
     block_confirmations: u64,
     max_block_range: u64,
-    sender: &mpsc::Sender<Message>,
+    sender: &mpsc::Sender<BlockScannerResult>,
     provider: &RobustProvider<N>,
     reorg_handler: &mut ReorgHandler<N>,
 ) -> Option<LiveStreamingState<N>> {
@@ -124,7 +124,7 @@ async fn stream_blocks_continuously<
     stream_start: BlockNumber,
     block_confirmations: u64,
     max_block_range: u64,
-    sender: &mpsc::Sender<Message>,
+    sender: &mpsc::Sender<BlockScannerResult>,
     provider: &RobustProvider<N>,
     reorg_handler: &mut ReorgHandler<N>,
 ) {
@@ -171,7 +171,7 @@ async fn stream_blocks_continuously<
 async fn check_for_reorg<N: Network>(
     previous_batch_end: Option<&N::BlockResponse>,
     reorg_handler: &mut ReorgHandler<N>,
-    sender: &mpsc::Sender<Message>,
+    sender: &mpsc::Sender<BlockScannerResult>,
 ) -> Option<Option<N::BlockResponse>> {
     let batch_end = previous_batch_end?;
 
@@ -191,7 +191,7 @@ async fn handle_reorg_detected<N: Network>(
     common_ancestor: N::BlockResponse,
     stream_start: BlockNumber,
     state: &mut LiveStreamingState<N>,
-    sender: &mpsc::Sender<Message>,
+    sender: &mpsc::Sender<BlockScannerResult>,
 ) -> bool {
     if !sender.try_stream(Notification::ReorgDetected).await {
         return false;
@@ -233,7 +233,7 @@ async fn stream_next_batch<N: Network>(
     state: &mut LiveStreamingState<N>,
     stream_start: BlockNumber,
     max_block_range: u64,
-    sender: &mpsc::Sender<Message>,
+    sender: &mpsc::Sender<BlockScannerResult>,
     provider: &RobustProvider<N>,
     reorg_handler: &mut ReorgHandler<N>,
 ) -> bool {
@@ -278,7 +278,7 @@ pub(crate) async fn stream_historical_blocks<N: Network>(
     mut next_start_block: BlockNumber,
     end: BlockNumber,
     max_block_range: u64,
-    sender: &mpsc::Sender<Message>,
+    sender: &mpsc::Sender<BlockScannerResult>,
     provider: &RobustProvider<N>,
     reorg_handler: &mut ReorgHandler<N>,
 ) -> Option<N::BlockResponse> {

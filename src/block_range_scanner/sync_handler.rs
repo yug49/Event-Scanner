@@ -4,7 +4,7 @@ use tracing::{error, info};
 
 use crate::{
     Notification, ScannerError,
-    block_range_scanner::{Message, common, reorg_handler::ReorgHandler},
+    block_range_scanner::{BlockScannerResult, common, reorg_handler::ReorgHandler},
     robust_provider::RobustProvider,
     types::TryStream,
 };
@@ -22,7 +22,7 @@ pub(crate) struct SyncHandler<N: Network> {
     max_block_range: u64,
     start_id: BlockId,
     block_confirmations: u64,
-    sender: mpsc::Sender<Message>,
+    sender: mpsc::Sender<BlockScannerResult>,
     reorg_handler: ReorgHandler<N>,
 }
 
@@ -32,7 +32,7 @@ impl<N: Network> SyncHandler<N> {
         max_block_range: u64,
         start_id: BlockId,
         block_confirmations: u64,
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<BlockScannerResult>,
     ) -> Self {
         let reorg_handler = ReorgHandler::new(provider.clone());
         Self { provider, max_block_range, start_id, block_confirmations, sender, reorg_handler }
@@ -152,7 +152,7 @@ impl<N: Network> SyncHandler<N> {
         mut confirmed_tip: BlockNumber,
         block_confirmations: u64,
         max_block_range: u64,
-        sender: &mpsc::Sender<Message>,
+        sender: &mpsc::Sender<BlockScannerResult>,
         provider: &RobustProvider<N>,
         reorg_handler: &mut ReorgHandler<N>,
     ) -> Result<BlockNumber, ScannerError> {
@@ -184,7 +184,7 @@ impl<N: Network> SyncHandler<N> {
         start_block: BlockNumber,
         block_confirmations: u64,
         max_block_range: u64,
-        sender: &mpsc::Sender<Message>,
+        sender: &mpsc::Sender<BlockScannerResult>,
         provider: &RobustProvider<N>,
         reorg_handler: &mut ReorgHandler<N>,
     ) {

@@ -7,10 +7,10 @@
 //!
 //! use alloy::providers::{Provider, ProviderBuilder};
 //! use event_scanner::{
-//!     ScannerError,
+//!     ScannerError, ScannerMessage,
 //!     block_range_scanner::{
 //!         BlockRangeScanner, BlockRangeScannerClient, DEFAULT_BLOCK_CONFIRMATIONS,
-//!         DEFAULT_MAX_BLOCK_RANGE, Message,
+//!         DEFAULT_MAX_BLOCK_RANGE,
 //!     },
 //!     robust_provider::RobustProviderBuilder,
 //! };
@@ -35,10 +35,13 @@
 //!
 //!     while let Some(message) = stream.next().await {
 //!         match message {
-//!             Message::Data(range) => {
+//!             Ok(ScannerMessage::Data(range)) => {
 //!                 // process range
 //!             }
-//!             Message::Error(e) => {
+//!             Ok(ScannerMessage::Notification(notification)) => {
+//!                 info!("Received notification: {:?}", notification);
+//!             }
+//!             Err(e) => {
 //!                 error!("Received error from subscription: {e}");
 //!                 match e {
 //!                     ScannerError::ServiceShutdown => break,
@@ -46,9 +49,6 @@
 //!                         error!("Non-fatal error, continuing: {e}");
 //!                     }
 //!                 }
-//!             }
-//!             Message::Notification(notification) => {
-//!                 info!("Received notification: {:?}", notification);
 //!             }
 //!         }
 //!     }
@@ -67,18 +67,17 @@ use tokio::{
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
-    ScannerMessage,
+    ScannerError, ScannerMessage,
     block_range_scanner::sync_handler::SyncHandler,
-    error::ScannerError,
     robust_provider::{Error as RobustProviderError, IntoRobustProvider, RobustProvider},
-    types::{Notification, TryStream},
+    types::{IntoScannerResult, Notification, ScannerResult, TryStream},
 };
+
 use alloy::{
     consensus::BlockHeader,
     eips::BlockId,
     network::{BlockResponse, Network, primitives::HeaderResponse},
     primitives::BlockNumber,
-    transports::{RpcError, TransportErrorKind},
 };
 use tracing::{debug, error, info, warn};
 
@@ -99,11 +98,13 @@ pub const MAX_BUFFERED_MESSAGES: usize = 50000;
 // is considered final)
 pub const DEFAULT_REORG_REWIND_DEPTH: u64 = 64;
 
-pub type Message = ScannerMessage<RangeInclusive<BlockNumber>, ScannerError>;
+pub type BlockScannerResult = ScannerResult<RangeInclusive<BlockNumber>>;
+
+pub type Message = ScannerMessage<RangeInclusive<BlockNumber>>;
 
 impl From<RangeInclusive<BlockNumber>> for Message {
-    fn from(logs: RangeInclusive<BlockNumber>) -> Self {
-        Message::Data(logs)
+    fn from(range: RangeInclusive<BlockNumber>) -> Self {
+        Message::Data(range)
     }
 }
 
@@ -113,21 +114,9 @@ impl PartialEq<RangeInclusive<BlockNumber>> for Message {
     }
 }
 
-impl From<RobustProviderError> for Message {
-    fn from(error: RobustProviderError) -> Self {
-        Message::Error(error.into())
-    }
-}
-
-impl From<RpcError<TransportErrorKind>> for Message {
-    fn from(error: RpcError<TransportErrorKind>) -> Self {
-        Message::Error(error.into())
-    }
-}
-
-impl From<ScannerError> for Message {
-    fn from(error: ScannerError) -> Self {
-        Message::Error(error)
+impl IntoScannerResult<RangeInclusive<BlockNumber>> for RangeInclusive<BlockNumber> {
+    fn into_scanner_message_result(self) -> BlockScannerResult {
+        Ok(Message::Data(self))
     }
 }
 
@@ -198,24 +187,24 @@ impl<N: Network> ConnectedBlockRangeScanner<N> {
 #[derive(Debug)]
 pub enum Command {
     StreamLive {
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<BlockScannerResult>,
         block_confirmations: u64,
         response: oneshot::Sender<Result<(), ScannerError>>,
     },
     StreamHistorical {
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<BlockScannerResult>,
         start_id: BlockId,
         end_id: BlockId,
         response: oneshot::Sender<Result<(), ScannerError>>,
     },
     StreamFrom {
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<BlockScannerResult>,
         start_id: BlockId,
         block_confirmations: u64,
         response: oneshot::Sender<Result<(), ScannerError>>,
     },
     Rewind {
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<BlockScannerResult>,
         start_id: BlockId,
         end_id: BlockId,
         response: oneshot::Sender<Result<(), ScannerError>>,
@@ -299,7 +288,7 @@ impl<N: Network> Service<N> {
     async fn handle_live(
         &mut self,
         block_confirmations: u64,
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<BlockScannerResult>,
     ) -> Result<(), ScannerError> {
         let max_block_range = self.max_block_range;
         let latest = self.provider.get_block_number().await?;
@@ -336,7 +325,7 @@ impl<N: Network> Service<N> {
         &mut self,
         start_id: BlockId,
         end_id: BlockId,
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<BlockScannerResult>,
     ) -> Result<(), ScannerError> {
         let max_block_range = self.max_block_range;
         let provider = self.provider.clone();
@@ -376,7 +365,7 @@ impl<N: Network> Service<N> {
         &self,
         start_id: BlockId,
         block_confirmations: u64,
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<BlockScannerResult>,
     ) -> Result<(), ScannerError> {
         let sync_handler = SyncHandler::new(
             self.provider.clone(),
@@ -392,7 +381,7 @@ impl<N: Network> Service<N> {
         &mut self,
         start_id: BlockId,
         end_id: BlockId,
-        sender: mpsc::Sender<Message>,
+        sender: mpsc::Sender<BlockScannerResult>,
     ) -> Result<(), ScannerError> {
         let max_block_range = self.max_block_range;
         let provider = self.provider.clone();
@@ -426,7 +415,7 @@ impl<N: Network> Service<N> {
         from: N::BlockResponse,
         to: N::BlockResponse,
         max_block_range: u64,
-        sender: &mpsc::Sender<Message>,
+        sender: &mpsc::Sender<BlockScannerResult>,
         provider: &RobustProvider<N>,
         reorg_handler: &mut ReorgHandler<N>,
     ) {
@@ -532,7 +521,7 @@ impl BlockRangeScannerClient {
     pub async fn stream_live(
         &self,
         block_confirmations: u64,
-    ) -> Result<ReceiverStream<Message>, ScannerError> {
+    ) -> Result<ReceiverStream<BlockScannerResult>, ScannerError> {
         let (blocks_sender, blocks_receiver) = mpsc::channel(MAX_BUFFERED_MESSAGES);
         let (response_tx, response_rx) = oneshot::channel();
 
@@ -563,7 +552,7 @@ impl BlockRangeScannerClient {
         &self,
         start_id: impl Into<BlockId>,
         end_id: impl Into<BlockId>,
-    ) -> Result<ReceiverStream<Message>, ScannerError> {
+    ) -> Result<ReceiverStream<BlockScannerResult>, ScannerError> {
         let (blocks_sender, blocks_receiver) = mpsc::channel(MAX_BUFFERED_MESSAGES);
         let (response_tx, response_rx) = oneshot::channel();
 
@@ -595,7 +584,7 @@ impl BlockRangeScannerClient {
         &self,
         start_id: impl Into<BlockId>,
         block_confirmations: u64,
-    ) -> Result<ReceiverStream<Message>, ScannerError> {
+    ) -> Result<ReceiverStream<BlockScannerResult>, ScannerError> {
         let (blocks_sender, blocks_receiver) = mpsc::channel(MAX_BUFFERED_MESSAGES);
         let (response_tx, response_rx) = oneshot::channel();
 
@@ -627,7 +616,7 @@ impl BlockRangeScannerClient {
         &self,
         start_id: impl Into<BlockId>,
         end_id: impl Into<BlockId>,
-    ) -> Result<ReceiverStream<Message>, ScannerError> {
+    ) -> Result<ReceiverStream<BlockScannerResult>, ScannerError> {
         let (blocks_sender, blocks_receiver) = mpsc::channel(MAX_BUFFERED_MESSAGES);
         let (response_tx, response_rx) = oneshot::channel();
 
@@ -670,15 +659,13 @@ mod tests {
 
     #[tokio::test]
     async fn try_send_forwards_errors_to_subscribers() {
-        let (tx, mut rx) = mpsc::channel::<Message>(1);
+        let (tx, mut rx) = mpsc::channel::<BlockScannerResult>(1);
 
         _ = tx.try_stream(ScannerError::BlockNotFound(4.into())).await;
 
         assert!(matches!(
             rx.recv().await,
-            Some(ScannerMessage::Error(ScannerError::BlockNotFound(BlockId::Number(
-                BlockNumberOrTag::Number(4)
-            ))))
+            Some(Err(ScannerError::BlockNotFound(BlockId::Number(BlockNumberOrTag::Number(4)))))
         ));
     }
 }
