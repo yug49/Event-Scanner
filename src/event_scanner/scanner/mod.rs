@@ -6,12 +6,12 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
-    EventFilter, Message, ScannerError,
+    EventFilter, ScannerError,
     block_range_scanner::{
         BlockRangeScanner, ConnectedBlockRangeScanner, DEFAULT_BLOCK_CONFIRMATIONS,
         MAX_BUFFERED_MESSAGES,
     },
-    event_scanner::listener::EventListener,
+    event_scanner::{EventScannerResult, listener::EventListener},
     robust_provider::IntoRobustProvider,
 };
 
@@ -96,7 +96,7 @@ impl EventScannerBuilder<Unspecified> {
     ///
     /// scanner.start().await?;
     ///
-    /// while let Some(Message::Data(logs)) = stream.next().await {
+    /// while let Some(Ok(Message::Data(logs))) = stream.next().await {
     ///     println!("Received {} logs", logs.len());
     /// }
     /// # Ok(())
@@ -167,13 +167,13 @@ impl EventScannerBuilder<Unspecified> {
     ///
     /// while let Some(msg) = stream.next().await {
     ///     match msg {
-    ///         Message::Data(logs) => {
+    ///         Ok(Message::Data(logs)) => {
     ///             println!("Received {} new events", logs.len());
     ///         }
-    ///         Message::Notification(notification) => {
+    ///         Ok(Message::Notification(notification)) => {
     ///             println!("Notification received: {:?}", notification);
     ///         }
-    ///         Message::Error(e) => {
+    ///         Err(e) => {
     ///             eprintln!("Error: {}", e);
     ///         }
     ///     }
@@ -251,7 +251,7 @@ impl EventScannerBuilder<Unspecified> {
     /// scanner.start().await?;
     ///
     /// // Expect a single message with up to 10 logs, then the stream ends
-    /// while let Some(Message::Data(logs)) = stream.next().await {
+    /// while let Some(Ok(Message::Data(logs))) = stream.next().await {
     ///     println!("Latest logs: {}", logs.len());
     /// }
     /// # Ok(())
@@ -299,6 +299,13 @@ impl EventScannerBuilder<Unspecified> {
     /// - **Default range**: By default, scans from `Earliest` to `Latest` block
     /// - **Reorg handling**: Periodically checks the tip to detect reorgs during the scan
     ///
+    /// # Notifications
+    ///
+    /// The scanner emits the following notification before delivering log data:
+    ///
+    /// - **[`Notification::NoPastLogsFound`][no_logs]**: Emitted when no matching logs are found in
+    ///   the scanned range.
+    ///
     /// # Arguments
     ///
     /// * `count` - Maximum number of recent events to collect per listener (must be greater than 0)
@@ -323,6 +330,7 @@ impl EventScannerBuilder<Unspecified> {
     /// [start]: EventScanner::start
     /// [sync_from_latest]: EventScannerBuilder::from_latest
     /// [reorg]: crate::Notification::ReorgDetected
+    /// [no_logs]: crate::Notification::NoPastLogsFound
     #[must_use]
     pub fn latest(count: usize) -> EventScannerBuilder<LatestEvents> {
         EventScannerBuilder::<LatestEvents>::new(count)
@@ -411,8 +419,8 @@ impl<M> EventScannerBuilder<M> {
 
 impl<M, N: Network> EventScanner<M, N> {
     #[must_use]
-    pub fn subscribe(&mut self, filter: EventFilter) -> ReceiverStream<Message> {
-        let (sender, receiver) = mpsc::channel::<Message>(MAX_BUFFERED_MESSAGES);
+    pub fn subscribe(&mut self, filter: EventFilter) -> ReceiverStream<EventScannerResult> {
+        let (sender, receiver) = mpsc::channel::<EventScannerResult>(MAX_BUFFERED_MESSAGES);
         self.listeners.push(EventListener { filter, sender });
         ReceiverStream::new(receiver)
     }
