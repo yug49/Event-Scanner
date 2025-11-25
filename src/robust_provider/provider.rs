@@ -350,11 +350,6 @@ mod tests {
         Ok((anvil, provider.root().to_owned()))
     }
 
-    async fn mine_after_delay(provider: RootProvider, blocks: u64, delay: Duration) {
-        sleep(delay).await;
-        provider.anvil_mine(Some(blocks), None).await.unwrap();
-    }
-
     fn assert_backend_gone_or_timeout(err: Error) {
         match err {
             Error::Timeout => {}
@@ -418,18 +413,28 @@ mod tests {
         };
     }
 
-    async fn trigger_fb_and_assert_next_block(
+    /// Waits for current provider to timeout, then mines on `next_provider` to trigger failover.
+    async fn trigger_failover_with_delay(
         stream: &mut RobustSubscriptionStream<alloy::network::Ethereum>,
-        fallback_provider: RootProvider,
+        next_provider: RootProvider,
         expected_block: u64,
+        extra_delay: Duration,
     ) -> anyhow::Result<()> {
         let task = tokio::spawn(async move {
-            sleep(SHORT_TIMEOUT + BUFFER_TIME).await;
-            fallback_provider.anvil_mine(Some(1), None).await.unwrap();
+            sleep(SHORT_TIMEOUT + extra_delay + BUFFER_TIME).await;
+            next_provider.anvil_mine(Some(1), None).await.unwrap();
         });
         assert_next_block!(*stream, expected_block);
         task.await?;
         Ok(())
+    }
+
+    async fn trigger_failover(
+        stream: &mut RobustSubscriptionStream<alloy::network::Ethereum>,
+        next_provider: RootProvider,
+        expected_block: u64,
+    ) -> anyhow::Result<()> {
+        trigger_failover_with_delay(stream, next_provider, expected_block, Duration::ZERO).await
     }
 
     #[tokio::test]
@@ -626,7 +631,7 @@ mod tests {
         assert_next_block!(stream, 2);
 
         // After timeout, should failover to fallback provider
-        trigger_fb_and_assert_next_block(&mut stream, fallback.clone(), 1).await?;
+        trigger_failover(&mut stream, fallback.clone(), 1).await?;
 
         fallback.anvil_mine(Some(1), None).await?;
         assert_next_block!(stream, 2);
@@ -649,65 +654,66 @@ mod tests {
         let subscription = robust.subscribe_blocks().await?;
         let mut stream = subscription.into_stream();
 
-        // Test: Start on primary
+        // Start on primary
         primary.anvil_mine(Some(1), None).await?;
         assert_next_block!(stream, 1);
 
-        // Trigger failover to fallback
-        trigger_fb_and_assert_next_block(&mut stream, fallback.clone(), 1).await?;
+        // PP times out -> FP1
+        trigger_failover(&mut stream, fallback.clone(), 1).await?;
 
         fallback.anvil_mine(Some(1), None).await?;
         assert_next_block!(stream, 2);
 
-        // Wait for reconnect interval to trigger primary reconnection
-        sleep(RECONNECT_INTERVAL + BUFFER_TIME).await;
+        // FP1 times out -> PP (reconnect succeeds)
+        trigger_failover(&mut stream, primary.clone(), 2).await?;
 
-        // Mine on primary after reconnection window
-        let reconnect_task =
-            tokio::spawn(mine_after_delay(primary.clone(), 1, Duration::from_millis(50)));
+        // PP times out -> FP1 (fallback index was reset)
+        trigger_failover(&mut stream, fallback.clone(), 3).await?;
 
-        // Verify: Successfully reconnected to primary (block 2 on primary chain)
-        assert_next_block!(stream, 2);
-        reconnect_task.await?;
-
-        assert_stream_finished!(stream);
+        fallback.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 4);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn subscription_cycles_through_multiple_fallbacks() -> anyhow::Result<()> {
-        // Setup: Three providers, will cycle through all
-        let (_anvil_1, provider_1) = spawn_ws_anvil().await?;
-        let (_anvil_2, provider_2) = spawn_ws_anvil().await?;
-        let (_anvil_3, provider_3) = spawn_ws_anvil().await?;
+        let (anvil_pp, primary) = spawn_ws_anvil().await?;
+        let (_anvil_1, fb_1) = spawn_ws_anvil().await?;
+        let (_anvil_2, fb_2) = spawn_ws_anvil().await?;
 
-        let robust = RobustProviderBuilder::fragile(provider_1.clone())
-            .fallback(provider_2.clone())
-            .fallback(provider_3.clone())
+        let robust = RobustProviderBuilder::fragile(primary.clone())
+            .fallback(fb_1.clone())
+            .fallback(fb_2.clone())
             .subscription_timeout(SHORT_TIMEOUT)
+            .call_timeout(SHORT_TIMEOUT)
             .build()
             .await?;
 
         let subscription = robust.subscribe_blocks().await?;
         let mut stream = subscription.into_stream();
 
-        // Test: Start on primary
-        provider_1.anvil_mine(Some(1), None).await?;
+        // Start on primary
+        primary.anvil_mine(Some(1), None).await?;
         assert_next_block!(stream, 1);
 
-        // Failover to second provider
-        trigger_fb_and_assert_next_block(&mut stream, provider_2.clone(), 1).await?;
+        // Kill primary - all future PP reconnection attempts will fail
+        drop(anvil_pp);
 
-        // Failover to third provider
-        trigger_fb_and_assert_next_block(&mut stream, provider_3.clone(), 1).await?;
+        // PP times out -> FP1
+        trigger_failover(&mut stream, fb_1.clone(), 1).await?;
+
+        // FP1 times out -> tries PP (fails, takes call_timeout) -> FP2
+        trigger_failover_with_delay(&mut stream, fb_2.clone(), 1, SHORT_TIMEOUT).await?;
+
+        fb_2.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 2);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn subscription_fails_with_no_fallbacks() -> anyhow::Result<()> {
-        // Setup: Single provider with no fallbacks
         let (_anvil, provider) = spawn_ws_anvil().await?;
 
         let robust = RobustProviderBuilder::fragile(provider.clone())
@@ -718,18 +724,12 @@ mod tests {
         let subscription = robust.subscribe_blocks().await?;
         let mut stream = subscription.into_stream();
 
-        // Test: Provider works initially
         provider.anvil_mine(Some(1), None).await?;
         assert_next_block!(stream, 1);
 
-        // Verify: No fallback available, should error
-        let task = tokio::spawn(async move {
-            sleep(SHORT_TIMEOUT + BUFFER_TIME).await;
-            provider.anvil_mine(Some(1), None).await.unwrap();
-        });
+        // No fallback available - should error after timeout
+        sleep(SHORT_TIMEOUT + BUFFER_TIME).await;
         let err = stream.next().await.unwrap().unwrap_err();
-        task.await?;
-
         assert_backend_gone_or_timeout(err);
 
         Ok(())
