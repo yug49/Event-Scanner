@@ -709,6 +709,11 @@ mod tests {
         fb_2.anvil_mine(Some(1), None).await?;
         assert_next_block!(stream, 2);
 
+        // FP2 times out -> tries PP (fails) -> no more fallbacks -> error
+        sleep(SHORT_TIMEOUT * 2 + BUFFER_TIME).await;
+        let err = stream.next().await.unwrap().unwrap_err();
+        assert_backend_gone_or_timeout(err);
+
         Ok(())
     }
 
