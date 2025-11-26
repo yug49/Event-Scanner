@@ -388,6 +388,8 @@ mod tests {
         sleep(SHORT_TIMEOUT + extra_delay + BUFFER_TIME).await;
         let err = stream.next().await.unwrap().unwrap_err();
         assert_backend_gone_or_timeout(err);
+        let next = stream.next().await;
+        assert!(next.is_none(), "Expected stream to be finished, got: {next:?}");
     }
 
     #[tokio::test]
@@ -418,9 +420,6 @@ mod tests {
 
         // Verify: HTTP fallback can't provide subscription, so we get an error
         assert_timeout_error(&mut stream, Duration::ZERO).await;
-
-        let next = stream.next().await;
-        assert!(next.is_none(), "Expected stream to be finished, got: {next:?}");
 
         Ok(())
     }
