@@ -749,6 +749,7 @@ mod tests {
         Ok(())
     }
 
+    // TODO: INVESTIGATE WHY THIS TEST FAILS ON THE LAST `assert_next_block`
     #[tokio::test]
     async fn test_reconnection_attempt_at_interval() -> anyhow::Result<()> {
         let (_anvil_1, primary) = spawn_ws_anvil().await?;
@@ -780,10 +781,9 @@ mod tests {
         assert_next_block!(stream, 3);
 
         // Wait for reconnect interval, then trigger timeout - should reconnect to primary
-        // sleep(RECONNECT_INTERVAL).await;
-        // primary.anvil_mine(Some(1), None).await?;
-        // assert_next_block!(stream, 2);
-        trigger_failover(&mut stream, primary.clone(), 3).await?;
+        sleep(RECONNECT_INTERVAL).await;
+        primary.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 3);
 
         Ok(())
     }
