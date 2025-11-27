@@ -392,169 +392,6 @@ mod tests {
         assert!(next.is_none(), "Expected stream to be finished, got: {next:?}");
     }
 
-    #[tokio::test]
-    async fn ws_fails_http_fallback_returns_primary_error() -> anyhow::Result<()> {
-        // Setup: Create WS primary and HTTP fallback
-        let anvil_1 = Anvil::new().try_spawn()?;
-        let ws_provider =
-            ProviderBuilder::new().connect(anvil_1.ws_endpoint_url().as_str()).await?;
-
-        let anvil_2 = Anvil::new().try_spawn()?;
-        let http_provider = ProviderBuilder::new().connect_http(anvil_2.endpoint_url());
-
-        let robust = RobustProviderBuilder::fragile(ws_provider.clone())
-            .fallback(http_provider.clone())
-            .subscription_timeout(Duration::from_secs(1))
-            .build()
-            .await?;
-
-        // Test: Verify subscription works on primary
-        let subscription = robust.subscribe_blocks().await?;
-        let mut stream = subscription.into_stream();
-
-        ws_provider.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 1);
-
-        ws_provider.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 2);
-
-        // Verify: HTTP fallback can't provide subscription, so we get an error
-        assert_timeout_error(&mut stream, Duration::ZERO).await;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn robust_subscription_stream_with_failover() -> anyhow::Result<()> {
-        let (_anvil_1, primary) = spawn_ws_anvil().await?;
-        let (_anvil_2, fallback) = spawn_ws_anvil().await?;
-
-        let robust = RobustProviderBuilder::fragile(primary.clone())
-            .fallback(fallback.clone())
-            .subscription_timeout(SHORT_TIMEOUT)
-            .build()
-            .await?;
-
-        let subscription = robust.subscribe_blocks().await?;
-        let mut stream = subscription.into_stream();
-
-        // Test: Primary works initially
-        primary.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 1);
-
-        primary.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 2);
-
-        // After timeout, should failover to fallback provider
-        trigger_failover(&mut stream, fallback.clone(), 1).await?;
-
-        fallback.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 2);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn subscription_reconnects_to_primary() -> anyhow::Result<()> {
-        let (_anvil_1, primary) = spawn_ws_anvil().await?;
-        let (_anvil_2, fallback) = spawn_ws_anvil().await?;
-
-        let robust = RobustProviderBuilder::fragile(primary.clone())
-            .fallback(fallback.clone())
-            .subscription_timeout(SHORT_TIMEOUT)
-            .reconnect_interval(RECONNECT_INTERVAL)
-            .build()
-            .await?;
-
-        let subscription = robust.subscribe_blocks().await?;
-        let mut stream = subscription.into_stream();
-
-        // Start on primary
-        primary.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 1);
-
-        // PP times out -> FP1
-        trigger_failover(&mut stream, fallback.clone(), 1).await?;
-
-        fallback.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 2);
-
-        // FP1 times out -> PP (reconnect succeeds)
-        trigger_failover(&mut stream, primary.clone(), 2).await?;
-
-        // PP times out -> FP1 (fallback index was reset)
-        trigger_failover(&mut stream, fallback.clone(), 3).await?;
-
-        fallback.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 4);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn subscription_cycles_through_multiple_fallbacks() -> anyhow::Result<()> {
-        let (anvil_pp, primary) = spawn_ws_anvil().await?;
-        let (_anvil_1, fb_1) = spawn_ws_anvil().await?;
-        let (_anvil_2, fb_2) = spawn_ws_anvil().await?;
-
-        let robust = RobustProviderBuilder::fragile(primary.clone())
-            .fallback(fb_1.clone())
-            .fallback(fb_2.clone())
-            .subscription_timeout(SHORT_TIMEOUT)
-            .call_timeout(SHORT_TIMEOUT)
-            .build()
-            .await?;
-
-        let subscription = robust.subscribe_blocks().await?;
-        let mut stream = subscription.into_stream();
-
-        // Start on primary
-        primary.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 1);
-
-        // Kill primary - all future PP reconnection attempts will fail
-        drop(anvil_pp);
-
-        // PP times out -> FP1
-        trigger_failover(&mut stream, fb_1.clone(), 1).await?;
-
-        // FP1 times out -> tries PP (fails, takes call_timeout) -> FP2
-        trigger_failover_with_delay(&mut stream, fb_2.clone(), 1, SHORT_TIMEOUT).await?;
-
-        fb_2.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 2);
-
-        // FP2 times out -> tries PP (fails) -> no more fallbacks -> error
-        assert_timeout_error(&mut stream, SHORT_TIMEOUT).await;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn subscription_fails_with_no_fallbacks() -> anyhow::Result<()> {
-        let (_anvil, provider) = spawn_ws_anvil().await?;
-
-        let robust = RobustProviderBuilder::fragile(provider.clone())
-            .subscription_timeout(SHORT_TIMEOUT)
-            .build()
-            .await?;
-
-        let subscription = robust.subscribe_blocks().await?;
-        let mut stream = subscription.into_stream();
-
-        provider.anvil_mine(Some(1), None).await?;
-        assert_next_block!(stream, 1);
-
-        // No fallback available - should error after timeout
-        assert_timeout_error(&mut stream, Duration::ZERO).await;
-
-        Ok(())
-    }
-
-    // ============================================================================
-    // NEW COMPREHENSIVE TEST CASES
-    // ============================================================================
-
     // ----------------------------------------------------------------------------
     // Regular Flow Tests
     // ----------------------------------------------------------------------------
@@ -721,6 +558,43 @@ mod tests {
     // ----------------------------------------------------------------------------
 
     #[tokio::test]
+    async fn subscription_reconnects_to_primary() -> anyhow::Result<()> {
+        let (_anvil_1, primary) = spawn_ws_anvil().await?;
+        let (_anvil_2, fallback) = spawn_ws_anvil().await?;
+
+        let robust = RobustProviderBuilder::fragile(primary.clone())
+            .fallback(fallback.clone())
+            .subscription_timeout(SHORT_TIMEOUT)
+            .reconnect_interval(RECONNECT_INTERVAL)
+            .build()
+            .await?;
+
+        let subscription = robust.subscribe_blocks().await?;
+        let mut stream = subscription.into_stream();
+
+        // Start on primary
+        primary.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 1);
+
+        // PP times out -> FP1
+        trigger_failover(&mut stream, fallback.clone(), 1).await?;
+
+        fallback.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 2);
+
+        // FP1 times out -> PP (reconnect succeeds)
+        trigger_failover(&mut stream, primary.clone(), 2).await?;
+
+        // PP times out -> FP1 (fallback index was reset)
+        trigger_failover(&mut stream, fallback.clone(), 3).await?;
+
+        fallback.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 4);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_reconnection_skipped_before_interval_elapsed() -> anyhow::Result<()> {
         let (_anvil_1, primary) = spawn_ws_anvil().await?;
         let (_anvil_2, fallback) = spawn_ws_anvil().await?;
@@ -738,6 +612,8 @@ mod tests {
         // Start on primary
         primary.anvil_mine(Some(1), None).await?;
         assert_next_block!(stream, 1);
+        primary.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 2);
 
         // Failover to fallback
         trigger_failover(&mut stream, fallback.clone(), 1).await?;
@@ -885,6 +761,66 @@ mod tests {
     // ----------------------------------------------------------------------------
     // Fallback Cycling Edge Cases
     // ----------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn subscription_cycles_through_multiple_fallbacks() -> anyhow::Result<()> {
+        let (anvil_pp, primary) = spawn_ws_anvil().await?;
+        let (_anvil_1, fb_1) = spawn_ws_anvil().await?;
+        let (_anvil_2, fb_2) = spawn_ws_anvil().await?;
+
+        let robust = RobustProviderBuilder::fragile(primary.clone())
+            .fallback(fb_1.clone())
+            .fallback(fb_2.clone())
+            .subscription_timeout(SHORT_TIMEOUT)
+            .call_timeout(SHORT_TIMEOUT)
+            .build()
+            .await?;
+
+        let subscription = robust.subscribe_blocks().await?;
+        let mut stream = subscription.into_stream();
+
+        // Start on primary
+        primary.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 1);
+
+        // Kill primary - all future PP reconnection attempts will fail
+        drop(anvil_pp);
+
+        // PP times out -> FP1
+        trigger_failover(&mut stream, fb_1.clone(), 1).await?;
+
+        // FP1 times out -> tries PP (fails, takes call_timeout) -> FP2
+        trigger_failover_with_delay(&mut stream, fb_2.clone(), 1, SHORT_TIMEOUT).await?;
+
+        fb_2.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 2);
+
+        // FP2 times out -> tries PP (fails) -> no more fallbacks -> error
+        assert_timeout_error(&mut stream, SHORT_TIMEOUT).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn subscription_fails_with_no_fallbacks() -> anyhow::Result<()> {
+        let (_anvil, provider) = spawn_ws_anvil().await?;
+
+        let robust = RobustProviderBuilder::fragile(provider.clone())
+            .subscription_timeout(SHORT_TIMEOUT)
+            .build()
+            .await?;
+
+        let subscription = robust.subscribe_blocks().await?;
+        let mut stream = subscription.into_stream();
+
+        provider.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 1);
+
+        // No fallback available - should error after timeout
+        assert_timeout_error(&mut stream, Duration::ZERO).await;
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_fallback_starting_from_different_indices() -> anyhow::Result<()> {
@@ -1271,6 +1207,38 @@ mod tests {
     // ----------------------------------------------------------------------------
     // Error Propagation Tests
     // ----------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn ws_fails_http_fallback_returns_primary_error() -> anyhow::Result<()> {
+        // Setup: Create WS primary and HTTP fallback
+        let anvil_1 = Anvil::new().try_spawn()?;
+        let ws_provider =
+            ProviderBuilder::new().connect(anvil_1.ws_endpoint_url().as_str()).await?;
+
+        let anvil_2 = Anvil::new().try_spawn()?;
+        let http_provider = ProviderBuilder::new().connect_http(anvil_2.endpoint_url());
+
+        let robust = RobustProviderBuilder::fragile(ws_provider.clone())
+            .fallback(http_provider.clone())
+            .subscription_timeout(Duration::from_secs(1))
+            .build()
+            .await?;
+
+        // Test: Verify subscription works on primary
+        let subscription = robust.subscribe_blocks().await?;
+        let mut stream = subscription.into_stream();
+
+        ws_provider.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 1);
+
+        ws_provider.anvil_mine(Some(1), None).await?;
+        assert_next_block!(stream, 2);
+
+        // Verify: HTTP fallback can't provide subscription, so we get an error
+        assert_timeout_error(&mut stream, Duration::ZERO).await;
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_backend_gone_error_propagation() -> anyhow::Result<()> {
