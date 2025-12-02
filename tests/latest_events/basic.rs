@@ -1,9 +1,60 @@
 use alloy::{
-    eips::BlockNumberOrTag, primitives::U256, providers::ext::AnvilApi, sol_types::SolEvent,
+    eips::BlockNumberOrTag,
+    primitives::{U256, address},
+    providers::{ProviderBuilder, ext::AnvilApi},
+    sol,
+    sol_types::SolEvent,
 };
+use tokio::time::Instant;
+use tokio_stream::StreamExt;
 
 use crate::common::{TestCounter, deploy_counter, setup_common, setup_latest_scanner};
 use event_scanner::{EventFilter, EventScannerBuilder, Notification, assert_closed, assert_next};
+
+sol! {
+    struct Transition {
+        bytes32 parentHash;
+        bytes32 blockHash;
+        bytes32 stateRoot;
+    }
+
+    event BatchesProved(address verifier, uint64[] batchIds, Transition[] transitions);
+}
+
+#[tokio::test]
+async fn load_test() -> anyhow::Result<()> {
+    let provider = ProviderBuilder::new()
+        .connect("https://mainnet.infura.io/v3/7f91ecc67a254027b28f302a4e813fab")
+        .await?;
+
+    let mut scanner = EventScannerBuilder::latest(4000).connect(provider).await?;
+
+    let mut stream = scanner.subscribe(
+        EventFilter::new()
+            .event(BatchesProved::SIGNATURE)
+            .contract_address(address!("0x06a9Ab27c7e2255df1815E6CC0168d7755Feb19a")),
+    );
+
+    scanner.start().await?;
+
+    let start = Instant::now();
+
+    while let Some(msg) = stream.next().await {
+        match msg {
+            Ok(msg) => println!("{:?}", msg),
+            Err(e) => eprintln!("{:?}", e),
+        }
+    }
+
+    let elapsed = start.elapsed();
+
+    // 3. Print the elapsed time using the debug formatter
+    println!("Time elapsed: {:.2?}", elapsed);
+
+    assert_closed!(stream);
+
+    Ok(())
+}
 
 #[tokio::test]
 async fn exact_count_returns_last_events_in_order() -> anyhow::Result<()> {
