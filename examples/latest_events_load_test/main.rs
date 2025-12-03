@@ -80,10 +80,7 @@ async fn main() -> anyhow::Result<()> {
         match msg {
             Ok(ScannerMessage::Data(logs)) => {
                 println!("count: {:?}", logs.len());
-                println!(
-                    "block start block: {:?}",
-                    logs.first().map(|log| log.block_number).unwrap()
-                );
+                println!("start block: {:?}", logs.first().map(|log| log.block_number).unwrap());
                 println!("end block: {:?}", logs.last().map(|log| log.block_number).unwrap());
             }
             Ok(ScannerMessage::Notification(notification)) => {
