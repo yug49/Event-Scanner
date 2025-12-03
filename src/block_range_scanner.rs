@@ -59,6 +59,7 @@
 //! }
 //! ```
 
+use crate::robust_provider::subscription::{self, RobustSubscription};
 use std::{cmp::Ordering, ops::RangeInclusive};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -68,7 +69,7 @@ use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 
 use crate::{
     ScannerError, ScannerMessage,
-    robust_provider::{Error as RobustProviderError, IntoRobustProvider, RobustProvider},
+    robust_provider::{IntoRobustProvider, RobustProvider, provider::Error as RobustProviderError},
     types::{IntoScannerResult, Notification, ScannerResult, TryStream},
 };
 
@@ -77,7 +78,6 @@ use alloy::{
     eips::BlockId,
     network::{BlockResponse, Network, primitives::HeaderResponse},
     primitives::{B256, BlockNumber},
-    pubsub::Subscription,
 };
 use tracing::{debug, error, info, warn};
 
@@ -583,16 +583,45 @@ impl<N: Network> Service<N> {
 
     async fn stream_live_blocks(
         mut range_start: BlockNumber,
-        subscription: Subscription<N::HeaderResponse>,
+        subscription: RobustSubscription<N>,
         sender: mpsc::Sender<BlockScannerResult>,
         block_confirmations: u64,
         max_block_range: u64,
     ) {
         // ensure we start streaming only after the expected_next_block cutoff
         let cutoff = range_start;
-        let mut stream = subscription.into_stream().skip_while(|header| header.number() < cutoff);
+        let mut stream = subscription.into_stream().skip_while(|result| match result {
+            Ok(header) => header.number() < cutoff,
+            Err(_) => false,
+        });
 
-        while let Some(incoming_block) = stream.next().await {
+        while let Some(result) = stream.next().await {
+            let incoming_block = match result {
+                Ok(block) => block,
+                Err(e) => {
+                    error!(error = %e, "Error receiving block from stream");
+                    match e {
+                        subscription::Error::Lagged(_) => {
+                            // scanner already accounts for skipped block numbers
+                            // next block will be the actual incoming block
+                            continue;
+                        }
+                        subscription::Error::Timeout => {
+                            _ = sender.try_stream(ScannerError::Timeout).await;
+                            return;
+                        }
+                        subscription::Error::RpcError(rpc_err) => {
+                            _ = sender.try_stream(ScannerError::RpcError(rpc_err)).await;
+                            return;
+                        }
+                        subscription::Error::Closed => {
+                            _ = sender.try_stream(ScannerError::SubscriptionClosed).await;
+                            return;
+                        }
+                    }
+                }
+            };
+
             let incoming_block_num = incoming_block.number();
             info!(block_number = incoming_block_num, "Received block header");
 
