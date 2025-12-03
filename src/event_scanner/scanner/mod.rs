@@ -92,9 +92,9 @@ impl EventScannerBuilder<Unspecified> {
     /// let mut scanner = EventScannerBuilder::historic().connect(robust_provider).await?;
     ///
     /// let filter = EventFilter::new().contract_address(contract_address);
-    /// let mut stream = scanner.subscribe(filter);
-    ///
-    /// scanner.start().await?;
+    /// let subscription = scanner.subscribe(filter);
+    /// let handle = scanner.start().await?;
+    /// let mut stream = subscription.stream(&handle);
     ///
     /// while let Some(Ok(Message::Data(logs))) = stream.next().await {
     ///     println!("Received {} logs", logs.len());
@@ -161,9 +161,9 @@ impl EventScannerBuilder<Unspecified> {
     ///     .await?;
     ///
     /// let filter = EventFilter::new().contract_address(contract_address);
-    /// let mut stream = scanner.subscribe(filter);
-    ///
-    /// scanner.start().await?;
+    /// let subscription = scanner.subscribe(filter);
+    /// let handle = scanner.start().await?;
+    /// let mut stream = subscription.stream(&handle);
     ///
     /// while let Some(msg) = stream.next().await {
     ///     match msg {
@@ -246,9 +246,9 @@ impl EventScannerBuilder<Unspecified> {
     /// let mut scanner = EventScannerBuilder::latest(10).connect(robust_provider).await?;
     ///
     /// let filter = EventFilter::new().contract_address(contract_address);
-    /// let mut stream = scanner.subscribe(filter);
-    ///
-    /// scanner.start().await?;
+    /// let subscription = scanner.subscribe(filter);
+    /// let handle = scanner.start().await?;
+    /// let mut stream = subscription.stream(&handle);
     ///
     /// // Expect a single message with up to 10 logs, then the stream ends
     /// while let Some(Ok(Message::Data(logs))) = stream.next().await {

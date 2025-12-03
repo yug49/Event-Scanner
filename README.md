@@ -85,10 +85,13 @@ async fn run_scanner(
         .contract_address(contract)
         .event(MyContract::SomeEvent::SIGNATURE);
 
-    let mut stream = scanner.subscribe(filter);
+    let subscription = scanner.subscribe(filter);
 
-    // Start the scanner
-    scanner.start().await?;
+    // Start the scanner and get the handle
+    let handle = scanner.start().await?;
+
+    // Access the stream using the handle
+    let mut stream = subscription.stream(&handle);
 
     // Process messages from the stream
     while let Some(message) = stream.next().await {

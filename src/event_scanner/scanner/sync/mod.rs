@@ -39,9 +39,10 @@ impl EventScannerBuilder<Synchronize> {
     ///     .await?;
     ///
     /// let filter = EventFilter::new().contract_address(contract_address);
-    /// let mut stream = scanner.subscribe(filter);
+    /// let subscription = scanner.subscribe(filter);
     ///
-    /// scanner.start().await?;
+    /// let handle = scanner.start().await?;
+    /// let mut stream = subscription.stream(&handle);
     ///
     /// while let Some(msg) = stream.next().await {
     ///     match msg {
@@ -149,9 +150,10 @@ impl EventScannerBuilder<Synchronize> {
     ///     .await?;
     ///
     /// let filter = EventFilter::new().contract_address(contract_address);
-    /// let mut stream = scanner.subscribe(filter);
+    /// let subscription = scanner.subscribe(filter);
     ///
-    /// scanner.start().await?;
+    /// let handle = scanner.start().await?;
+    /// let mut stream = subscription.stream(&handle);
     ///
     /// while let Some(msg) = stream.next().await {
     ///     match msg {
