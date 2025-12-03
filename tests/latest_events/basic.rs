@@ -54,6 +54,45 @@ async fn load_test() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn load_test_historic() -> anyhow::Result<()> {
+    let provider = ProviderBuilder::new().connect("https://l1rpc.internal.taiko.xyz").await?;
+
+    let mut scanner = EventScannerBuilder::historic().connect(provider).await?;
+
+    let filter = EventFilter::new()
+        .event(Proposed::SIGNATURE)
+        .contract_address(address!("0x12100faa7b157e9947340B44409fC7E27EC0ABef"));
+    let mut stream = scanner.subscribe(filter);
+
+    scanner.start().await?;
+
+    let start = Instant::now();
+
+    let mut count = 0;
+    while let Some(msg) = stream.next().await {
+        match msg {
+            Ok(ScannerMessage::Data(logs)) => count += logs.len(),
+            Ok(ScannerMessage::Notification(notification)) => {
+                println!("notification: {:?}", notification)
+            }
+            Err(e) => {
+                eprintln!("{:?}", e);
+                break;
+            }
+        }
+    }
+
+    println!("log count: {:?}", count);
+
+    let elapsed = start.elapsed();
+
+    // 3. Print the elapsed time using the debug formatter
+    println!("Time elapsed: {:.2?}", elapsed);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn exact_count_returns_last_events_in_order() -> anyhow::Result<()> {
     let setup = setup_latest_scanner(None, None, 5, None, None).await?;
     let contract = setup.contract;
