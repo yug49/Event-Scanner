@@ -43,12 +43,12 @@ impl ScannerHandle {
 
 /// A subscription to scanner events that requires proof the scanner has started.
 ///
-/// Created by [`EventScanner::subscribe()`](crate::EventScanner::subscribe), this type holds the underlying stream
-/// but prevents access until [`stream()`](EventSubscription::stream) is called with a
-/// valid [`ScannerHandle`].
+/// Created by [`EventScanner::subscribe()`](crate::EventScanner::subscribe), this type holds the
+/// underlying stream but prevents access until [`stream()`](EventSubscription::stream) is called
+/// with a valid [`ScannerHandle`].
 ///
-/// This pattern ensures at compile time that [`EventScanner::start()`](crate::EventScanner::start) is called
-/// before attempting to read from the event stream.
+/// This pattern ensures at compile time that [`EventScanner::start()`](crate::EventScanner::start)
+/// is called before attempting to read from the event stream.
 ///
 /// # Example
 ///
@@ -81,7 +81,8 @@ impl EventSubscription {
     /// Access the event stream.
     ///
     /// Requires a reference to a [`ScannerHandle`] as proof that the scanner
-    /// has been started. The handle is obtained by calling [`EventScanner::start()`](crate::EventScanner::start).
+    /// has been started. The handle is obtained by calling
+    /// [`EventScanner::start()`](crate::EventScanner::start).
     ///
     /// # Arguments
     ///

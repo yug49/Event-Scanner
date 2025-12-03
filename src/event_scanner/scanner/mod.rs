@@ -437,8 +437,8 @@ impl<M, N: Network> EventScanner<M, N> {
     /// Creates a subscription for events matching the given filter.
     ///
     /// The returned [`EventSubscription`] cannot be used to access the event stream
-    /// until [`start()`](EventScanner::start) is called and a [`ScannerHandle`](crate::ScannerHandle)
-    /// is obtained.
+    /// until [`start()`](EventScanner::start) is called and a
+    /// [`ScannerHandle`](crate::ScannerHandle) is obtained.
     ///
     /// # Example
     ///
