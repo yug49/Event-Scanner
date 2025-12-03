@@ -70,7 +70,7 @@ sol! {
 }
 
 #[tokio::test]
-async fn load_test_latest_proposed() -> anyhow::Result<()> {
+async fn load_test_latest() -> anyhow::Result<()> {
     let provider = ProviderBuilder::new().connect("https://l1rpc.internal.taiko.xyz").await?;
 
     let mut scanner = EventScannerBuilder::latest(4000).connect(provider).await?;
@@ -106,46 +106,7 @@ async fn load_test_latest_proposed() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn load_test_latest_batch_proposed() -> anyhow::Result<()> {
-    let provider = ProviderBuilder::new()
-        .connect("https://mainnet.infura.io/v3/7f91ecc67a254027b28f302a4e813fab")
-        .await?;
-
-    let mut scanner =
-        EventScannerBuilder::latest(16800).max_block_range(10000).connect(provider).await?;
-
-    let filter = EventFilter::new()
-        .event(BatchProposed::SIGNATURE)
-        .contract_address(address!("0x06a9Ab27c7e2255df1815E6CC0168d7755Feb19a"));
-    let mut stream = scanner.subscribe(filter);
-
-    scanner.start().await?;
-
-    let start = Instant::now();
-
-    while let Some(msg) = stream.next().await {
-        match msg {
-            Ok(ScannerMessage::Data(logs)) => println!("count: {:?}", logs.len()),
-            Ok(ScannerMessage::Notification(notification)) => {
-                println!("notification: {:?}", notification)
-            }
-            Err(e) => {
-                eprintln!("{:?}", e);
-                break;
-            }
-        }
-    }
-
-    let elapsed = start.elapsed();
-
-    // 3. Print the elapsed time using the debug formatter
-    println!("Time elapsed: {:.2?}", elapsed);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn load_test_historic_proposed() -> anyhow::Result<()> {
+async fn load_test_historic() -> anyhow::Result<()> {
     let provider = ProviderBuilder::new().connect("https://l1rpc.internal.taiko.xyz").await?;
 
     let mut scanner = EventScannerBuilder::historic().connect(provider).await?;
@@ -153,45 +114,6 @@ async fn load_test_historic_proposed() -> anyhow::Result<()> {
     let filter = EventFilter::new()
         .event(Proposed::SIGNATURE)
         .contract_address(address!("0x12100faa7b157e9947340B44409fC7E27EC0ABef"));
-    let mut stream = scanner.subscribe(filter);
-
-    scanner.start().await?;
-
-    let start = Instant::now();
-
-    let mut count = 0;
-    while let Some(msg) = stream.next().await {
-        match msg {
-            Ok(ScannerMessage::Data(logs)) => count += logs.len(),
-            Ok(ScannerMessage::Notification(notification)) => {
-                println!("notification: {:?}", notification)
-            }
-            Err(e) => {
-                eprintln!("{:?}", e);
-                break;
-            }
-        }
-    }
-
-    println!("log count: {:?}", count);
-
-    let elapsed = start.elapsed();
-
-    // 3. Print the elapsed time using the debug formatter
-    println!("Time elapsed: {:.2?}", elapsed);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn load_test_historic_batch_proposed() -> anyhow::Result<()> {
-    let provider = ProviderBuilder::new().connect("https://l1rpc.internal.taiko.xyz").await?;
-
-    let mut scanner = EventScannerBuilder::historic().connect(provider).await?;
-
-    let filter = EventFilter::new()
-        .event(BatchProposed::SIGNATURE)
-        .contract_address(address!("0x06a9Ab27c7e2255df1815E6CC0168d7755Feb19a"));
     let mut stream = scanner.subscribe(filter);
 
     scanner.start().await?;
