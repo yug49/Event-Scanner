@@ -3,7 +3,7 @@ use alloy::network::Network;
 use super::common::{ConsumerMode, handle_stream};
 use crate::{
     EventScannerBuilder, ScannerError,
-    event_scanner::{EventScanner, scanner::Live},
+    event_scanner::{EventScanner, ScannerHandle, scanner::Live},
     robust_provider::IntoRobustProvider,
 };
 
@@ -43,7 +43,7 @@ impl<N: Network> EventScanner<Live, N> {
     /// Can error out if the service fails to start.
     ///
     /// [subscribe]: EventScanner::subscribe
-    pub async fn start(self) -> Result<(), ScannerError> {
+    pub async fn start(self) -> Result<ScannerHandle, ScannerError> {
         let client = self.block_range_scanner.run()?;
         let stream = client.stream_live(self.config.block_confirmations).await?;
 
@@ -54,7 +54,7 @@ impl<N: Network> EventScanner<Live, N> {
             handle_stream(stream, &provider, &listeners, ConsumerMode::Stream).await;
         });
 
-        Ok(())
+        Ok(ScannerHandle::new())
     }
 }
 
