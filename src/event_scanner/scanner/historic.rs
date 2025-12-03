@@ -7,7 +7,10 @@ use alloy::{
 use super::common::{ConsumerMode, handle_stream};
 use crate::{
     EventScannerBuilder, ScannerError,
-    event_scanner::{ScannerHandle, scanner::{EventScanner, Historic}},
+    event_scanner::{
+        ScannerHandle,
+        scanner::{EventScanner, Historic},
+    },
     robust_provider::IntoRobustProvider,
 };
 

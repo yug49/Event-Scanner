@@ -436,13 +436,13 @@ impl<M> EventScannerBuilder<M> {
 impl<M, N: Network> EventScanner<M, N> {
     /// Creates a subscription for events matching the given filter.
     ///
-    /// The returned [`Subscription`] cannot be used to access the event stream
-    /// until [`start()`](EventScanner::start) is called and a [`ScannerHandle`]
+    /// The returned [`EventSubscription`] cannot be used to access the event stream
+    /// until [`start()`](EventScanner::start) is called and a [`ScannerHandle`](crate::ScannerHandle)
     /// is obtained.
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```ignore
     /// let subscription = scanner.subscribe(filter);
     /// let handle = scanner.start().await?;
     /// let mut stream = subscription.stream(&handle);
