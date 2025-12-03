@@ -73,6 +73,12 @@ impl EventScannerBuilder<LatestEvents> {
             Err(ScannerError::BlockExceedsLatest("to_block", to_num, latest_block))?;
         }
 
+        println!(
+            "expected block range: {} to {}",
+            scanner.config.from_block, scanner.config.to_block
+        );
+        println!("latest block: {}", latest_block);
+
         Ok(scanner)
     }
 }

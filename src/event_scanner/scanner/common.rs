@@ -186,6 +186,7 @@ async fn handle_block_range_message<N: Network>(
 ) -> bool {
     match message {
         Ok(ScannerMessage::Data(range)) => {
+            println!("block range: {range:?}");
             if !handle_block_range(range, filter, base_filter, provider, sender, mode, collected)
                 .await
             {

@@ -78,7 +78,14 @@ async fn main() -> anyhow::Result<()> {
 
     while let Some(msg) = stream.next().await {
         match msg {
-            Ok(ScannerMessage::Data(logs)) => println!("count: {:?}", logs.len()),
+            Ok(ScannerMessage::Data(logs)) => {
+                println!("count: {:?}", logs.len());
+                println!(
+                    "block start block: {:?}",
+                    logs.first().map(|log| log.block_number).unwrap()
+                );
+                println!("end block: {:?}", logs.last().map(|log| log.block_number).unwrap());
+            }
             Ok(ScannerMessage::Notification(notification)) => {
                 println!("notification: {:?}", notification)
             }
