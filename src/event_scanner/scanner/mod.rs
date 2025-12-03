@@ -11,7 +11,7 @@ use crate::{
         BlockRangeScanner, ConnectedBlockRangeScanner, DEFAULT_BLOCK_CONFIRMATIONS,
         MAX_BUFFERED_MESSAGES, RingBufferCapacity,
     },
-    event_scanner::{EventScannerResult, listener::EventListener, subscription::EventSubscription},
+    event_scanner::{EventScannerResult, listener::EventListener, stream::EventSubscription},
     robust_provider::IntoRobustProvider,
 };
 
