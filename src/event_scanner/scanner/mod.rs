@@ -11,7 +11,7 @@ use crate::{
         BlockRangeScanner, ConnectedBlockRangeScanner, DEFAULT_BLOCK_CONFIRMATIONS,
         MAX_BUFFERED_MESSAGES, RingBufferCapacity,
     },
-    event_scanner::{EventScannerResult, listener::EventListener},
+    event_scanner::{EventScannerResult, listener::EventListener, subscription::EventSubscription},
     robust_provider::IntoRobustProvider,
 };
 
@@ -434,11 +434,24 @@ impl<M> EventScannerBuilder<M> {
 }
 
 impl<M, N: Network> EventScanner<M, N> {
+    /// Creates a subscription for events matching the given filter.
+    ///
+    /// The returned [`Subscription`] cannot be used to access the event stream
+    /// until [`start()`](EventScanner::start) is called and a [`ScannerHandle`]
+    /// is obtained.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// let subscription = scanner.subscribe(filter);
+    /// let handle = scanner.start().await?;
+    /// let mut stream = subscription.stream(&handle);
+    /// ```
     #[must_use]
-    pub fn subscribe(&mut self, filter: EventFilter) -> ReceiverStream<EventScannerResult> {
+    pub fn subscribe(&mut self, filter: EventFilter) -> EventSubscription {
         let (sender, receiver) = mpsc::channel::<EventScannerResult>(MAX_BUFFERED_MESSAGES);
         self.listeners.push(EventListener { filter, sender });
-        ReceiverStream::new(receiver)
+        EventSubscription::new(ReceiverStream::new(receiver))
     }
 }
 
