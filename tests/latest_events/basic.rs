@@ -9,30 +9,25 @@ use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
 use crate::common::{TestCounter, deploy_counter, setup_common, setup_latest_scanner};
-use event_scanner::{EventFilter, EventScannerBuilder, Notification, assert_closed, assert_next};
+use event_scanner::{
+    EventFilter, EventScannerBuilder, Notification, ScannerMessage, assert_closed, assert_next,
+};
 
 sol! {
-    struct Transition {
-        bytes32 parentHash;
-        bytes32 blockHash;
-        bytes32 stateRoot;
-    }
+    event Proposed(bytes data);
 
-    event BatchesProved(address verifier, uint64[] batchIds, Transition[] transitions);
 }
 
 #[tokio::test]
 async fn load_test() -> anyhow::Result<()> {
-    let provider = ProviderBuilder::new()
-        .connect("https://mainnet.infura.io/v3/7f91ecc67a254027b28f302a4e813fab")
-        .await?;
+    let provider = ProviderBuilder::new().connect("https://l1rpc.internal.taiko.xyz").await?;
 
     let mut scanner = EventScannerBuilder::latest(4000).connect(provider).await?;
 
     let mut stream = scanner.subscribe(
         EventFilter::new()
-            .event(BatchesProved::SIGNATURE)
-            .contract_address(address!("0x06a9Ab27c7e2255df1815E6CC0168d7755Feb19a")),
+            .event(Proposed::SIGNATURE)
+            .contract_address(address!("0x12100faa7b157e9947340B44409fC7E27EC0ABef")),
     );
 
     scanner.start().await?;
@@ -41,7 +36,10 @@ async fn load_test() -> anyhow::Result<()> {
 
     while let Some(msg) = stream.next().await {
         match msg {
-            Ok(msg) => println!("{:?}", msg),
+            Ok(ScannerMessage::Data(logs)) => println!("count: {:?}", logs.len()),
+            Ok(ScannerMessage::Notification(notification)) => {
+                println!("notification: {:?}", notification)
+            }
             Err(e) => eprintln!("{:?}", e),
         }
     }
