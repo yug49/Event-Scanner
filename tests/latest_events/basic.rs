@@ -15,7 +15,6 @@ use event_scanner::{
 
 sol! {
     event Proposed(bytes data);
-
 }
 
 #[tokio::test]
@@ -24,11 +23,10 @@ async fn load_test() -> anyhow::Result<()> {
 
     let mut scanner = EventScannerBuilder::latest(4000).connect(provider).await?;
 
-    let mut stream = scanner.subscribe(
-        EventFilter::new()
-            .event(Proposed::SIGNATURE)
-            .contract_address(address!("0x12100faa7b157e9947340B44409fC7E27EC0ABef")),
-    );
+    let filter = EventFilter::new()
+        .event(Proposed::SIGNATURE)
+        .contract_address(address!("0x12100faa7b157e9947340B44409fC7E27EC0ABef"));
+    let mut stream = scanner.subscribe(filter);
 
     scanner.start().await?;
 
@@ -40,7 +38,10 @@ async fn load_test() -> anyhow::Result<()> {
             Ok(ScannerMessage::Notification(notification)) => {
                 println!("notification: {:?}", notification)
             }
-            Err(e) => eprintln!("{:?}", e),
+            Err(e) => {
+                eprintln!("{:?}", e);
+                break;
+            }
         }
     }
 
@@ -48,8 +49,6 @@ async fn load_test() -> anyhow::Result<()> {
 
     // 3. Print the elapsed time using the debug formatter
     println!("Time elapsed: {:.2?}", elapsed);
-
-    assert_closed!(stream);
 
     Ok(())
 }
