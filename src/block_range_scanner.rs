@@ -362,24 +362,23 @@ impl<N: Network> Service<N> {
         let (start_block, end_block) =
             tokio::try_join!(self.provider.get_block(start_id), self.provider.get_block(end_id))?;
 
-        let start_block_num = start_block.header().number();
-        let end_block_num = end_block.header().number();
+        let start_block = start_block.header().number();
+        let end_block = end_block.header().number();
 
-        let (start_block_num, end_block_num) = match start_block_num.cmp(&end_block_num) {
-            Ordering::Greater => (end_block_num, start_block_num),
-            _ => (start_block_num, end_block_num),
+        let (start_block, end_block) = match start_block.cmp(&end_block) {
+            Ordering::Greater => (end_block, start_block),
+            _ => (start_block, end_block),
         };
 
-        info!(start_block = start_block_num, end_block = end_block_num, "Syncing historical data");
+        info!(start_block = start_block, end_block = end_block, "Normalized the block range");
 
         tokio::spawn(async move {
             let mut reorg_handler =
                 ReorgHandler::new(provider.clone(), past_blocks_storage_capacity);
 
-            common::stream_block_range(
-                start_block_num,
-                start_block_num,
-                end_block_num,
+            common::stream_historical_range(
+                start_block,
+                end_block,
                 max_block_range,
                 &sender,
                 &provider,

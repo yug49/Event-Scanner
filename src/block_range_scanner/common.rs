@@ -9,6 +9,7 @@ use crate::{
 };
 use alloy::{
     consensus::BlockHeader,
+    eips::BlockNumberOrTag,
     network::{BlockResponse, Network},
     primitives::BlockNumber,
 };
@@ -136,8 +137,9 @@ async fn initialize_live_streaming_state<N: Network>(
     let confirmed = incoming_block_num.saturating_sub(block_confirmations);
 
     // Catch up on any confirmed blocks between stream_start and the confirmed tip
-    let previous_batch_end = stream_block_range(
-        stream_start,
+    // todo: explain why stream_start - 1 is min_common_ancestor
+    let previous_batch_end = stream_range_with_reorg_handling(
+        stream_start.saturating_sub(1),
         stream_start,
         confirmed,
         max_block_range,
@@ -289,8 +291,8 @@ async fn stream_next_batch<N: Network>(
         return true;
     }
 
-    state.previous_batch_end = stream_block_range(
-        stream_start,
+    state.previous_batch_end = stream_range_with_reorg_handling(
+        stream_start.saturating_sub(1),
         state.batch_start,
         batch_end_num,
         max_block_range,
@@ -320,8 +322,8 @@ struct LiveStreamingState<N: Network> {
 }
 
 /// Assumes that `min_block <= next_start_block <= end`.
-pub(crate) async fn stream_block_range<N: Network>(
-    min_block: BlockNumber,
+pub(crate) async fn stream_range_with_reorg_handling<N: Network>(
+    min_common_ancestor: BlockNumber,
     mut next_start_block: BlockNumber,
     end: BlockNumber,
     max_block_range: u64,
@@ -364,13 +366,10 @@ pub(crate) async fn stream_block_range<N: Network>(
             if !sender.try_stream(Notification::ReorgDetected).await {
                 return None;
             }
-            if common_ancestor.header().number() < min_block {
-                min_block
-            } else {
-                common_ancestor.header().number() + 1
-            }
+
+            min_common_ancestor.max(common_ancestor.header().number()) + 1
         } else {
-            batch_end_num.saturating_add(1)
+            batch_end_num + 1
         };
 
         if next_start_block > end {
@@ -378,4 +377,64 @@ pub(crate) async fn stream_block_range<N: Network>(
             return Some(batch_end);
         }
     }
+}
+
+pub(crate) async fn stream_historical_range<N: Network>(
+    start: BlockNumber,
+    end: BlockNumber,
+    max_block_range: u64,
+    sender: &mpsc::Sender<BlockScannerResult>,
+    provider: &RobustProvider<N>,
+    reorg_handler: &mut ReorgHandler<N>,
+) {
+    info!("Getting finalized block number");
+    let finalized = match provider.get_block_number_by_id(BlockNumberOrTag::Finalized.into()).await
+    {
+        Ok(block) => block,
+        Err(e) => {
+            error!(error = %e, "Failed to get finalized block");
+            _ = sender.try_stream(e).await;
+            return;
+        }
+    };
+
+    // no reorg check for finalized blocks
+    let mut batch_start = start;
+    let finalized_batch_end = finalized.min(end);
+    while batch_start < finalized_batch_end {
+        let batch_end = batch_start.saturating_add(max_block_range - 1).min(end);
+
+        if !sender.try_stream(batch_start..=batch_end).await {
+            return; // channel closed
+        }
+
+        batch_start = batch_end + 1;
+    }
+
+    // covers case when `end <= finalized`
+    if batch_start > end {
+        return; // we're done
+    }
+
+    // we have non-finalized block numbers to stream, a reorg can occur
+
+    // Possible minimal common ancestors when a reorg occurs:
+    // * start > finalized -> the common ancestor we care about is the block before `start`, that's
+    //   where the stream should restart -> this is why we used `start - 1`
+    // * start == finalized -> `start` should never be re-streamed on reorgs; stream should restart
+    //   on `start + 1`
+    // * start < finalized -> if we got here, then `end > finalized`; on reorg, we should only
+    //   re-stream non-finalized blocks
+    let min_common_ancestor = (start.saturating_sub(1)).max(finalized);
+
+    stream_range_with_reorg_handling(
+        min_common_ancestor,
+        batch_start,
+        end,
+        max_block_range,
+        sender,
+        provider,
+        reorg_handler,
+    )
+    .await;
 }

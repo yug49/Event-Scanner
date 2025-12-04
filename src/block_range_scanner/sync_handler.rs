@@ -160,8 +160,7 @@ impl<N: Network> SyncHandler<N> {
         reorg_handler: &mut ReorgHandler<N>,
     ) -> Result<BlockNumber, ScannerError> {
         while start_block < confirmed_tip {
-            common::stream_block_range(
-                start_block,
+            common::stream_historical_range(
                 start_block,
                 confirmed_tip,
                 max_block_range,
