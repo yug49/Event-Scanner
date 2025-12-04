@@ -2459,7 +2459,7 @@ dependencies = [
 
 [[package]]
 name = "latest_events_load_test"
-version = "0.6.0-alpha"
+version = "0.7.0-alpha"
 dependencies = [
  "alloy",
  "alloy-node-bindings",
