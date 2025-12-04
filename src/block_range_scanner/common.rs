@@ -389,7 +389,7 @@ pub(crate) async fn stream_historical_range<N: Network>(
     Some(())
 }
 
-/// Assumes that `min_block <= next_start_block <= end`.
+/// Assumes that `min_common_ancestor <= next_start_block <= end`, performs no internal checks.
 pub(crate) async fn stream_range_with_reorg_handling<N: Network>(
     min_common_ancestor: BlockNumber,
     mut next_start_block: BlockNumber,
