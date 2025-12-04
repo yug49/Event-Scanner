@@ -321,64 +321,6 @@ struct LiveStreamingState<N: Network> {
     previous_batch_end: Option<N::BlockResponse>,
 }
 
-/// Assumes that `min_block <= next_start_block <= end`.
-pub(crate) async fn stream_range_with_reorg_handling<N: Network>(
-    min_common_ancestor: BlockNumber,
-    mut next_start_block: BlockNumber,
-    end: BlockNumber,
-    max_block_range: u64,
-    sender: &mpsc::Sender<BlockScannerResult>,
-    provider: &RobustProvider<N>,
-    reorg_handler: &mut ReorgHandler<N>,
-) -> Option<N::BlockResponse> {
-    let mut batch_count = 0;
-
-    loop {
-        let batch_end_num = next_start_block.saturating_add(max_block_range - 1).min(end);
-        let batch_end = match provider.get_block_by_number(batch_end_num.into()).await {
-            Ok(block) => block,
-            Err(e) => {
-                error!(batch_start = next_start_block, batch_end = batch_end_num, error = %e, "Failed to get ending block of the current batch");
-                _ = sender.try_stream(e).await;
-                return None;
-            }
-        };
-
-        if !sender.try_stream(next_start_block..=batch_end_num).await {
-            return None; // channel closed
-        }
-
-        batch_count += 1;
-        if batch_count % 10 == 0 {
-            debug!(batch_count = batch_count, "Processed historical batches");
-        }
-
-        let reorged_opt = match reorg_handler.check(&batch_end).await {
-            Ok(opt) => opt,
-            Err(e) => {
-                error!(error = %e, "Failed to perform reorg check");
-                _ = sender.try_stream(e).await;
-                return None;
-            }
-        };
-
-        next_start_block = if let Some(common_ancestor) = reorged_opt {
-            if !sender.try_stream(Notification::ReorgDetected).await {
-                return None;
-            }
-
-            min_common_ancestor.max(common_ancestor.header().number()) + 1
-        } else {
-            batch_end_num + 1
-        };
-
-        if next_start_block > end {
-            info!(batch_count = batch_count, "Historical sync completed");
-            return Some(batch_end);
-        }
-    }
-}
-
 pub(crate) async fn stream_historical_range<N: Network>(
     start: BlockNumber,
     end: BlockNumber,
@@ -437,4 +379,62 @@ pub(crate) async fn stream_historical_range<N: Network>(
         reorg_handler,
     )
     .await;
+}
+
+/// Assumes that `min_block <= next_start_block <= end`.
+pub(crate) async fn stream_range_with_reorg_handling<N: Network>(
+    min_common_ancestor: BlockNumber,
+    mut next_start_block: BlockNumber,
+    end: BlockNumber,
+    max_block_range: u64,
+    sender: &mpsc::Sender<BlockScannerResult>,
+    provider: &RobustProvider<N>,
+    reorg_handler: &mut ReorgHandler<N>,
+) -> Option<N::BlockResponse> {
+    let mut batch_count = 0;
+
+    loop {
+        let batch_end_num = next_start_block.saturating_add(max_block_range - 1).min(end);
+        let batch_end = match provider.get_block_by_number(batch_end_num.into()).await {
+            Ok(block) => block,
+            Err(e) => {
+                error!(batch_start = next_start_block, batch_end = batch_end_num, error = %e, "Failed to get ending block of the current batch");
+                _ = sender.try_stream(e).await;
+                return None;
+            }
+        };
+
+        if !sender.try_stream(next_start_block..=batch_end_num).await {
+            return None; // channel closed
+        }
+
+        batch_count += 1;
+        if batch_count % 10 == 0 {
+            debug!(batch_count = batch_count, "Processed historical batches");
+        }
+
+        let reorged_opt = match reorg_handler.check(&batch_end).await {
+            Ok(opt) => opt,
+            Err(e) => {
+                error!(error = %e, "Failed to perform reorg check");
+                _ = sender.try_stream(e).await;
+                return None;
+            }
+        };
+
+        next_start_block = if let Some(common_ancestor) = reorged_opt {
+            if !sender.try_stream(Notification::ReorgDetected).await {
+                return None;
+            }
+
+            min_common_ancestor.max(common_ancestor.header().number()) + 1
+        } else {
+            batch_end_num + 1
+        };
+
+        if next_start_block > end {
+            info!(batch_count = batch_count, "Historical sync completed");
+            return Some(batch_end);
+        }
+    }
 }
