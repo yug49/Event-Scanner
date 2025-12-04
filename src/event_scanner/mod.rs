@@ -10,4 +10,4 @@ pub use scanner::{
     EventScanner, EventScannerBuilder, Historic, LatestEvents, Live, SyncFromBlock,
     SyncFromLatestEvents,
 };
-pub use stream::{EventSubscription, ScannerHandle};
+pub use stream::{EventSubscription, ScannerToken};

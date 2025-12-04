@@ -7,7 +7,7 @@ use alloy::{
 use super::common::{ConsumerMode, handle_stream};
 use crate::{
     EventScannerBuilder, ScannerError,
-    event_scanner::{EventScanner, LatestEvents, ScannerHandle},
+    event_scanner::{EventScanner, LatestEvents, ScannerToken},
     robust_provider::IntoRobustProvider,
 };
 
@@ -91,7 +91,7 @@ impl<N: Network> EventScanner<LatestEvents, N> {
     /// Can error out if the service fails to start.
     ///
     /// [subscribe]: EventScanner::subscribe
-    pub async fn start(self) -> Result<ScannerHandle, ScannerError> {
+    pub async fn start(self) -> Result<ScannerToken, ScannerError> {
         let client = self.block_range_scanner.run()?;
         let stream = client.rewind(self.config.from_block, self.config.to_block).await?;
 
@@ -108,7 +108,7 @@ impl<N: Network> EventScanner<LatestEvents, N> {
             .await;
         });
 
-        Ok(ScannerHandle::new())
+        Ok(ScannerToken::new())
     }
 }
 

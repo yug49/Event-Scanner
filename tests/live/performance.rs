@@ -8,8 +8,8 @@ async fn high_event_volume_no_loss() -> anyhow::Result<()> {
     let LiveScannerSetup { contract, provider: _p, scanner, subscription, anvil: _a } =
         setup_live_scanner(None, None, 0).await?;
 
-    let handle = scanner.start().await?;
-    let mut stream = subscription.stream(&handle);
+    let token = scanner.start().await?;
+    let mut stream = subscription.stream(&token);
 
     tokio::spawn(async move {
         for _ in 0..100 {

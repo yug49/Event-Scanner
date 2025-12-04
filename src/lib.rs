@@ -15,5 +15,5 @@ pub use types::{Notification, ScannerMessage};
 
 pub use event_scanner::{
     EventFilter, EventScanner, EventScannerBuilder, EventScannerResult, EventSubscription,
-    Historic, LatestEvents, Live, Message, ScannerHandle, SyncFromBlock, SyncFromLatestEvents,
+    Historic, LatestEvents, Live, Message, ScannerToken, SyncFromBlock, SyncFromLatestEvents,
 };

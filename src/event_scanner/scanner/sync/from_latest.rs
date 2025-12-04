@@ -5,7 +5,7 @@ use tracing::{error, info};
 use crate::{
     EventScannerBuilder, ScannerError,
     event_scanner::{
-        EventScanner, ScannerHandle,
+        EventScanner, ScannerToken,
         scanner::{
             SyncFromLatestEvents,
             common::{ConsumerMode, handle_stream},
@@ -56,7 +56,7 @@ impl<N: Network> EventScanner<SyncFromLatestEvents, N> {
     ///
     /// [subscribe]: EventScanner::subscribe
     #[allow(clippy::missing_panics_doc)]
-    pub async fn start(self) -> Result<ScannerHandle, ScannerError> {
+    pub async fn start(self) -> Result<ScannerToken, ScannerError> {
         let count = self.config.count;
         let provider = self.block_range_scanner.provider().clone();
         let listeners = self.listeners.clone();
@@ -107,7 +107,7 @@ impl<N: Network> EventScanner<SyncFromLatestEvents, N> {
             handle_stream(sync_stream, &provider, &listeners, ConsumerMode::Stream).await;
         });
 
-        Ok(ScannerHandle::new())
+        Ok(ScannerToken::new())
     }
 }
 

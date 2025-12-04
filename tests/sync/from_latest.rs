@@ -21,8 +21,8 @@ async fn happy_path_no_duplicates() -> anyhow::Result<()> {
     contract.increase().send().await?.watch().await?;
 
     // Ask for the latest 3, then live
-    let handle = scanner.start().await?;
-    let mut stream = subscription.stream(&handle);
+    let token = scanner.start().await?;
+    let mut stream = subscription.stream(&token);
 
     // Latest phase
     assert_next!(
@@ -65,8 +65,8 @@ async fn fewer_historical_then_continues_live() -> anyhow::Result<()> {
     contract.increase().send().await?.watch().await?;
     contract.increase().send().await?.watch().await?;
 
-    let handle = scanner.start().await?;
-    let mut stream = subscription.stream(&handle);
+    let token = scanner.start().await?;
+    let mut stream = subscription.stream(&token);
 
     // Latest phase returns all available
     assert_next!(
@@ -110,8 +110,8 @@ async fn exact_historical_count_then_live() -> anyhow::Result<()> {
     contract.increase().send().await?.watch().await?;
     contract.increase().send().await?.watch().await?;
 
-    let handle = scanner.start().await?;
-    let mut stream = subscription.stream(&handle);
+    let token = scanner.start().await?;
+    let mut stream = subscription.stream(&token);
 
     assert_next!(
         stream,
@@ -146,8 +146,8 @@ async fn no_historical_only_live_streams() -> anyhow::Result<()> {
     let scanner = setup.scanner;
     let subscription = setup.subscription;
 
-    let handle = scanner.start().await?;
-    let mut stream = subscription.stream(&handle);
+    let token = scanner.start().await?;
+    let mut stream = subscription.stream(&token);
 
     // Latest is empty
     assert_next!(stream, Notification::NoPastLogsFound);
@@ -192,8 +192,8 @@ async fn block_gaps_do_not_affect_number_of_events_streamed() -> anyhow::Result<
 
     provider.primary().anvil_mine(Some(1), None).await?;
 
-    let handle = scanner.start().await?;
-    let mut stream = subscription.stream(&handle);
+    let token = scanner.start().await?;
+    let mut stream = subscription.stream(&token);
 
     // Latest phase
     assert_next!(
@@ -233,8 +233,8 @@ async fn waiting_on_live_logs_arriving() -> anyhow::Result<()> {
     contract.increase().send().await?.watch().await?;
     contract.increase().send().await?.watch().await?;
 
-    let handle = scanner.start().await?;
-    let mut stream = subscription.stream(&handle);
+    let token = scanner.start().await?;
+    let mut stream = subscription.stream(&token);
 
     // Latest phase
     assert_next!(

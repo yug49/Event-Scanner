@@ -87,11 +87,11 @@ async fn run_scanner(
 
     let subscription = scanner.subscribe(filter);
 
-    // Start the scanner and get the handle
-    let handle = scanner.start().await?;
+    // Start the scanner and get the token
+    let token = scanner.start().await?;
 
-    // Access the stream using the handle
-    let mut stream = subscription.stream(&handle);
+    // Access the stream using the token
+    let mut stream = subscription.stream(&token);
 
     // Process messages from the stream
     while let Some(message) = stream.next().await {

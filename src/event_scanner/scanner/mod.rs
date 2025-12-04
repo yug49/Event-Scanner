@@ -93,8 +93,8 @@ impl EventScannerBuilder<Unspecified> {
     ///
     /// let filter = EventFilter::new().contract_address(contract_address);
     /// let subscription = scanner.subscribe(filter);
-    /// let handle = scanner.start().await?;
-    /// let mut stream = subscription.stream(&handle);
+    /// let token = scanner.start().await?;
+    /// let mut stream = subscription.stream(&token);
     ///
     /// while let Some(Ok(Message::Data(logs))) = stream.next().await {
     ///     println!("Received {} logs", logs.len());
@@ -162,8 +162,8 @@ impl EventScannerBuilder<Unspecified> {
     ///
     /// let filter = EventFilter::new().contract_address(contract_address);
     /// let subscription = scanner.subscribe(filter);
-    /// let handle = scanner.start().await?;
-    /// let mut stream = subscription.stream(&handle);
+    /// let token = scanner.start().await?;
+    /// let mut stream = subscription.stream(&token);
     ///
     /// while let Some(msg) = stream.next().await {
     ///     match msg {
@@ -247,8 +247,8 @@ impl EventScannerBuilder<Unspecified> {
     ///
     /// let filter = EventFilter::new().contract_address(contract_address);
     /// let subscription = scanner.subscribe(filter);
-    /// let handle = scanner.start().await?;
-    /// let mut stream = subscription.stream(&handle);
+    /// let token = scanner.start().await?;
+    /// let mut stream = subscription.stream(&token);
     ///
     /// // Expect a single message with up to 10 logs, then the stream ends
     /// while let Some(Ok(Message::Data(logs))) = stream.next().await {
@@ -438,14 +438,14 @@ impl<M, N: Network> EventScanner<M, N> {
     ///
     /// The returned [`EventSubscription`] cannot be used to access the event stream
     /// until [`start()`](EventScanner::start) is called and a
-    /// [`ScannerHandle`](crate::ScannerHandle) is obtained.
+    /// [`ScannerToken`](crate::ScannerToken) is obtained.
     ///
     /// # Example
     ///
     /// ```ignore
     /// let subscription = scanner.subscribe(filter);
-    /// let handle = scanner.start().await?;
-    /// let mut stream = subscription.stream(&handle);
+    /// let token = scanner.start().await?;
+    /// let mut stream = subscription.stream(&token);
     /// ```
     #[must_use]
     pub fn subscribe(&mut self, filter: EventFilter) -> EventSubscription {

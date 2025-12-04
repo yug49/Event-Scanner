@@ -67,10 +67,10 @@ async fn main() -> anyhow::Result<()> {
         _ = counter_contract.increase().send().await?;
     }
 
-    let handle = client.start().await.expect("failed to start scanner");
+    let token = client.start().await.expect("failed to start scanner");
 
-    // Access the stream using the handle (proves scanner is started)
-    let mut stream = subscription.stream(&handle);
+    // Access the stream using the token (proves scanner is started)
+    let mut stream = subscription.stream(&token);
 
     // emit some events for live mode to pick up
     _ = counter_contract.increase().send().await?;
