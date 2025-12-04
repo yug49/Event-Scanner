@@ -136,10 +136,12 @@ async fn initialize_live_streaming_state<N: Network>(
 
     let confirmed = incoming_block_num.saturating_sub(block_confirmations);
 
+    // The minimum common ancestor is the block before the stream start
+    let min_common_ancestor = stream_start.saturating_sub(1);
+
     // Catch up on any confirmed blocks between stream_start and the confirmed tip
-    // todo: explain why stream_start - 1 is min_common_ancestor
     let previous_batch_end = stream_range_with_reorg_handling(
-        stream_start.saturating_sub(1),
+        min_common_ancestor,
         stream_start,
         confirmed,
         max_block_range,
@@ -291,8 +293,11 @@ async fn stream_next_batch<N: Network>(
         return true;
     }
 
+    // The minimum common ancestor is the block before the stream start
+    let min_common_ancestor = stream_start.saturating_sub(1);
+
     state.previous_batch_end = stream_range_with_reorg_handling(
-        stream_start.saturating_sub(1),
+        min_common_ancestor,
         state.batch_start,
         batch_end_num,
         max_block_range,
