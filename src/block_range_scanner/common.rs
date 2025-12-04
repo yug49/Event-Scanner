@@ -321,6 +321,7 @@ struct LiveStreamingState<N: Network> {
     previous_batch_end: Option<N::BlockResponse>,
 }
 
+#[must_use]
 pub(crate) async fn stream_historical_range<N: Network>(
     start: BlockNumber,
     end: BlockNumber,
@@ -328,7 +329,7 @@ pub(crate) async fn stream_historical_range<N: Network>(
     sender: &mpsc::Sender<BlockScannerResult>,
     provider: &RobustProvider<N>,
     reorg_handler: &mut ReorgHandler<N>,
-) {
+) -> Option<()> {
     info!("Getting finalized block number");
     let finalized = match provider.get_block_number_by_id(BlockNumberOrTag::Finalized.into()).await
     {
@@ -336,7 +337,7 @@ pub(crate) async fn stream_historical_range<N: Network>(
         Err(e) => {
             error!(error = %e, "Failed to get finalized block");
             _ = sender.try_stream(e).await;
-            return;
+            return None;
         }
     };
 
@@ -347,7 +348,7 @@ pub(crate) async fn stream_historical_range<N: Network>(
         let batch_end = batch_start.saturating_add(max_block_range - 1).min(end);
 
         if !sender.try_stream(batch_start..=batch_end).await {
-            return; // channel closed
+            return None; // channel closed
         }
 
         batch_start = batch_end + 1;
@@ -355,7 +356,7 @@ pub(crate) async fn stream_historical_range<N: Network>(
 
     // covers case when `end <= finalized`
     if batch_start > end {
-        return; // we're done
+        return Some(()); // we're done
     }
 
     // we have non-finalized block numbers to stream, a reorg can occur
@@ -378,7 +379,9 @@ pub(crate) async fn stream_historical_range<N: Network>(
         provider,
         reorg_handler,
     )
-    .await;
+    .await?;
+
+    Some(())
 }
 
 /// Assumes that `min_block <= next_start_block <= end`.

@@ -376,7 +376,7 @@ impl<N: Network> Service<N> {
             let mut reorg_handler =
                 ReorgHandler::new(provider.clone(), past_blocks_storage_capacity);
 
-            common::stream_historical_range(
+            _ = common::stream_historical_range(
                 start_block,
                 end_block,
                 max_block_range,
