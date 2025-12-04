@@ -5,7 +5,7 @@ use crate::{
     block_range_scanner::{BlockScannerResult, MAX_BUFFERED_MESSAGES},
     event_scanner::{EventScannerResult, filter::EventFilter, listener::EventListener},
     robust_provider::{RobustProvider, provider::Error as RobustProviderError},
-    types::TryStream,
+    types::{ChannelState, TryStream},
 };
 use alloy::{
     network::Network,
@@ -97,7 +97,7 @@ pub fn spawn_log_consumers<N: Network>(
             loop {
                 match range_rx.recv().await {
                     Ok(message) => {
-                        if !handle_block_range_message(
+                        if handle_block_range_message(
                             message,
                             &filter,
                             &base_filter,
@@ -107,6 +107,7 @@ pub fn spawn_log_consumers<N: Network>(
                             &mut collected,
                         )
                         .await
+                        .is_closed()
                         {
                             break;
                         }
@@ -183,29 +184,30 @@ async fn handle_block_range_message<N: Network>(
     sender: &mpsc::Sender<EventScannerResult>,
     mode: ConsumerMode,
     collected: &mut Vec<Log>,
-) -> bool {
+) -> ChannelState {
     match message {
         Ok(ScannerMessage::Data(range)) => {
-            if !handle_block_range(range, filter, base_filter, provider, sender, mode, collected)
+            if handle_block_range(range, filter, base_filter, provider, sender, mode, collected)
                 .await
+                .is_closed()
             {
-                return false;
+                return ChannelState::Closed;
             }
         }
         Ok(ScannerMessage::Notification(notification)) => {
             info!(notification = ?notification, "Received notification");
-            if !sender.try_stream(notification).await {
-                return false;
+            if sender.try_stream(notification).await.is_closed() {
+                return ChannelState::Closed;
             }
         }
         Err(e) => {
             error!(error = ?e, "Received error message");
-            if !sender.try_stream(e).await {
-                return false;
+            if sender.try_stream(e).await.is_closed() {
+                return ChannelState::Closed;
             }
         }
     }
-    true
+    ChannelState::Open
 }
 
 #[must_use]
@@ -217,40 +219,40 @@ async fn handle_block_range<N: Network>(
     sender: &mpsc::Sender<EventScannerResult>,
     mode: ConsumerMode,
     collected: &mut Vec<Log>,
-) -> bool {
+) -> ChannelState {
     match get_logs(range, filter, base_filter, provider).await {
         Ok(logs) => {
             if logs.is_empty() {
-                return true;
+                return ChannelState::Open;
             }
 
             match mode {
                 ConsumerMode::Stream => {
-                    if !sender.try_stream(logs).await {
-                        return false;
+                    if sender.try_stream(logs).await.is_closed() {
+                        return ChannelState::Closed;
                     }
                 }
                 ConsumerMode::CollectLatest { count } => {
                     let take = count.saturating_sub(collected.len());
                     // if we have enough logs, break
                     if take == 0 {
-                        return false;
+                        return ChannelState::Closed;
                     }
                     // take latest within this range
                     collected.extend(logs.into_iter().rev().take(take));
                     // if we have enough logs, break
                     if collected.len() == count {
-                        return false;
+                        return ChannelState::Closed;
                     }
                 }
             }
         }
         Err(e) => {
             error!(error = ?e, "Received error message");
-            if !sender.try_stream(e).await {
-                return false;
+            if sender.try_stream(e).await.is_closed() {
+                return ChannelState::Closed;
             }
         }
     }
-    true
+    ChannelState::Open
 }

@@ -5,7 +5,7 @@ use crate::{
     ScannerError,
     block_range_scanner::{BlockScannerResult, reorg_handler::ReorgHandler},
     robust_provider::{RobustProvider, RobustSubscription, subscription},
-    types::{Notification, TryStream},
+    types::{ChannelState, Notification, TryStream},
 };
 use alloy::{
     consensus::BlockHeader,
@@ -34,7 +34,9 @@ pub(crate) async fn stream_live_blocks<N: Network>(
         return;
     };
 
-    if notify_after_first_block && !sender.try_stream(Notification::SwitchingToLive).await {
+    if notify_after_first_block
+        && sender.try_stream(Notification::SwitchingToLive).await.is_closed()
+    {
         return;
     }
 
@@ -213,8 +215,9 @@ async fn stream_blocks_continuously<
         };
 
         if let Some(common_ancestor) = common_ancestor {
-            if !handle_reorg_detected(common_ancestor, stream_start, state, sender).await {
-                return; // Channel closed
+            if handle_reorg_detected(common_ancestor, stream_start, state, sender).await.is_closed()
+            {
+                return;
             }
         } else {
             // No reorg: advance batch_start to after the previous batch
@@ -223,7 +226,7 @@ async fn stream_blocks_continuously<
 
         // Stream the next batch of confirmed blocks
         let batch_end_num = incoming_block_num.saturating_sub(block_confirmations);
-        if !stream_next_batch(
+        if stream_next_batch(
             batch_end_num,
             state,
             stream_start,
@@ -233,22 +236,25 @@ async fn stream_blocks_continuously<
             reorg_handler,
         )
         .await
+        .is_closed()
         {
-            return; // Channel closed
+            return;
         }
     }
 }
 
-/// Handles a detected reorg by notifying and adjusting the streaming state
-/// Returns false if the channel is closed
+/// Handles a detected reorg by notifying and adjusting the streaming state.
+///
+/// Returns [`ChannelState::Closed`] if the downstream receiver has been dropped,
+/// [`ChannelState::Open`] otherwise.
 async fn handle_reorg_detected<N: Network>(
     common_ancestor: N::BlockResponse,
     stream_start: BlockNumber,
     state: &mut LiveStreamingState<N>,
     sender: &mpsc::Sender<BlockScannerResult>,
-) -> bool {
-    if !sender.try_stream(Notification::ReorgDetected).await {
-        return false;
+) -> ChannelState {
+    if sender.try_stream(Notification::ReorgDetected).await.is_closed() {
+        return ChannelState::Closed;
     }
 
     let ancestor_num = common_ancestor.header().number();
@@ -270,11 +276,14 @@ async fn handle_reorg_detected<N: Network>(
         state.previous_batch_end = Some(common_ancestor);
     }
 
-    true
+    ChannelState::Open
 }
 
 /// Streams the next batch of blocks up to `batch_end_num`.
-/// Returns false if the channel is closed
+///
+/// Returns [`ChannelState::Closed`] if the downstream receiver has been dropped
+/// or an error occurred that was streamed to the subscriber.
+/// Returns [`ChannelState::Open`] if the batch was successfully streamed.
 async fn stream_next_batch<N: Network>(
     batch_end_num: BlockNumber,
     state: &mut LiveStreamingState<N>,
@@ -283,10 +292,10 @@ async fn stream_next_batch<N: Network>(
     sender: &mpsc::Sender<BlockScannerResult>,
     provider: &RobustProvider<N>,
     reorg_handler: &mut ReorgHandler<N>,
-) -> bool {
+) -> ChannelState {
     if batch_end_num < state.batch_start {
         // No new confirmed blocks to stream yet
-        return true;
+        return ChannelState::Open;
     }
 
     state.previous_batch_end = stream_block_range(
@@ -301,14 +310,13 @@ async fn stream_next_batch<N: Network>(
     .await;
 
     if state.previous_batch_end.is_none() {
-        // Channel closed
-        return false;
+        return ChannelState::Closed;
     }
 
     // SAFETY: Overflow cannot realistically happen
     state.batch_start = batch_end_num + 1;
 
-    true
+    ChannelState::Open
 }
 
 /// Tracks the current state of live streaming
@@ -342,8 +350,8 @@ pub(crate) async fn stream_block_range<N: Network>(
             }
         };
 
-        if !sender.try_stream(next_start_block..=batch_end_num).await {
-            return None; // channel closed
+        if sender.try_stream(next_start_block..=batch_end_num).await.is_closed() {
+            return None;
         }
 
         batch_count += 1;
@@ -361,7 +369,7 @@ pub(crate) async fn stream_block_range<N: Network>(
         };
 
         next_start_block = if let Some(common_ancestor) = reorged_opt {
-            if !sender.try_stream(Notification::ReorgDetected).await {
+            if sender.try_stream(Notification::ReorgDetected).await.is_closed() {
                 return None;
             }
             if common_ancestor.header().number() < min_block {

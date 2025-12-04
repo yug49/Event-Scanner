@@ -468,7 +468,7 @@ impl<N: Network> Service<N> {
             let batch_to = batch_from.saturating_sub(max_block_range - 1).max(to);
 
             // stream the range regularly, i.e. from smaller block number to greater
-            if !sender.try_stream(batch_to..=batch_from).await {
+            if sender.try_stream(batch_to..=batch_from).await.is_closed() {
                 break;
             }
 
@@ -501,7 +501,7 @@ impl<N: Network> Service<N> {
             if reorged_opt.is_some() {
                 info!(block_number = %from, hash = %tip.header().hash(), "Reorg detected");
 
-                if !sender.try_stream(Notification::ReorgDetected).await {
+                if sender.try_stream(Notification::ReorgDetected).await.is_closed() {
                     break;
                 }
 

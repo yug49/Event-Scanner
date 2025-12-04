@@ -200,7 +200,7 @@ impl<N: Network> SyncHandler<N> {
             }
         };
 
-        if !sender.try_stream(Notification::SwitchingToLive).await {
+        if sender.try_stream(Notification::SwitchingToLive).await.is_closed() {
             return;
         }
 
