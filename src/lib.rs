@@ -11,7 +11,7 @@ mod types;
 pub use block_range_scanner::RingBufferCapacity as PastBlocksStorageCapacity;
 
 pub use error::ScannerError;
-pub use types::{Notification, ScannerMessage};
+pub use types::{ChannelState, Notification, ScannerMessage, TryStream};
 
 pub use event_scanner::{
     EventFilter, EventScanner, EventScannerBuilder, EventScannerResult, Historic, LatestEvents,
