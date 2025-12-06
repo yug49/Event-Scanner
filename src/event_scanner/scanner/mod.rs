@@ -9,7 +9,7 @@ use crate::{
     EventFilter, ScannerError,
     block_range_scanner::{
         BlockRangeScanner, ConnectedBlockRangeScanner, DEFAULT_BLOCK_CONFIRMATIONS,
-        MAX_BUFFERED_MESSAGES, RingBufferCapacity,
+        RingBufferCapacity,
     },
     event_scanner::{EventScannerResult, listener::EventListener},
     robust_provider::IntoRobustProvider,
@@ -418,6 +418,21 @@ impl<M> EventScannerBuilder<M> {
         self
     }
 
+    /// Sets the maximum capacity for internal message channels.
+    ///
+    /// This controls the buffer size for channels used to stream block ranges and events.
+    /// Higher values allow more messages to be buffered, which can help with throughput
+    /// at the cost of memory usage.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_stream_capacity` - Maximum number of messages to buffer (must be greater than 0)
+    #[must_use]
+    pub fn max_stream_capacity(mut self, max_stream_capacity: usize) -> Self {
+        self.block_range_scanner.max_stream_capacity = max_stream_capacity;
+        self
+    }
+
     /// Builds the scanner by connecting to an existing provider.
     ///
     /// This is a shared method used internally by scanner-specific `connect()` methods.
@@ -436,7 +451,8 @@ impl<M> EventScannerBuilder<M> {
 impl<M, N: Network> EventScanner<M, N> {
     #[must_use]
     pub fn subscribe(&mut self, filter: EventFilter) -> ReceiverStream<EventScannerResult> {
-        let (sender, receiver) = mpsc::channel::<EventScannerResult>(MAX_BUFFERED_MESSAGES);
+        let capacity = self.block_range_scanner.max_stream_capacity();
+        let (sender, receiver) = mpsc::channel::<EventScannerResult>(capacity);
         self.listeners.push(EventListener { filter, sender });
         ReceiverStream::new(receiver)
     }
@@ -504,6 +520,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_historic_event_stream_channel_capacity() -> anyhow::Result<()> {
+        use crate::block_range_scanner::MAX_BUFFERED_MESSAGES;
+
         let provider = RootProvider::<Ethereum>::new(RpcClient::mocked(Asserter::new()));
         let mut scanner = EventScannerBuilder::historic().build(provider).await?;
 
@@ -511,6 +529,24 @@ mod tests {
 
         let sender = &scanner.listeners[0].sender;
         assert_eq!(sender.capacity(), MAX_BUFFERED_MESSAGES);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_custom_max_stream_capacity() -> anyhow::Result<()> {
+        let custom_capacity = 1000;
+
+        let provider = RootProvider::<Ethereum>::new(RpcClient::mocked(Asserter::new()));
+        let mut scanner = EventScannerBuilder::historic()
+            .max_stream_capacity(custom_capacity)
+            .build(provider)
+            .await?;
+
+        let _ = scanner.subscribe(EventFilter::new());
+
+        let sender = &scanner.listeners[0].sender;
+        assert_eq!(sender.capacity(), custom_capacity);
 
         Ok(())
     }

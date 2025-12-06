@@ -85,6 +85,7 @@ impl<N: Network> EventScanner<Historic, N> {
     ///
     /// [subscribe]: EventScanner::subscribe
     pub async fn start(self) -> Result<(), ScannerError> {
+        let max_stream_capacity = self.block_range_scanner.max_stream_capacity();
         let client = self.block_range_scanner.run()?;
         let stream = client.stream_historical(self.config.from_block, self.config.to_block).await?;
 
@@ -92,7 +93,8 @@ impl<N: Network> EventScanner<Historic, N> {
         let listeners = self.listeners.clone();
 
         tokio::spawn(async move {
-            handle_stream(stream, &provider, &listeners, ConsumerMode::Stream).await;
+            handle_stream(stream, &provider, &listeners, ConsumerMode::Stream, max_stream_capacity)
+                .await;
         });
 
         Ok(())

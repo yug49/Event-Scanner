@@ -58,6 +58,7 @@ impl<N: Network> EventScanner<SyncFromLatestEvents, N> {
     #[allow(clippy::missing_panics_doc)]
     pub async fn start(self) -> Result<(), ScannerError> {
         let count = self.config.count;
+        let max_stream_capacity = self.block_range_scanner.max_stream_capacity();
         let provider = self.block_range_scanner.provider().clone();
         let listeners = self.listeners.clone();
 
@@ -85,6 +86,7 @@ impl<N: Network> EventScanner<SyncFromLatestEvents, N> {
                 &provider,
                 &listeners,
                 ConsumerMode::CollectLatest { count },
+                max_stream_capacity,
             )
             .await;
 
@@ -104,7 +106,14 @@ impl<N: Network> EventScanner<SyncFromLatestEvents, N> {
                 };
 
             // Start the live (sync) stream.
-            handle_stream(sync_stream, &provider, &listeners, ConsumerMode::Stream).await;
+            handle_stream(
+                sync_stream,
+                &provider,
+                &listeners,
+                ConsumerMode::Stream,
+                max_stream_capacity,
+            )
+            .await;
         });
 
         Ok(())

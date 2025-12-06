@@ -92,6 +92,7 @@ impl<N: Network> EventScanner<LatestEvents, N> {
     ///
     /// [subscribe]: EventScanner::subscribe
     pub async fn start(self) -> Result<(), ScannerError> {
+        let max_stream_capacity = self.block_range_scanner.max_stream_capacity();
         let client = self.block_range_scanner.run()?;
         let stream = client.rewind(self.config.from_block, self.config.to_block).await?;
 
@@ -104,6 +105,7 @@ impl<N: Network> EventScanner<LatestEvents, N> {
                 &provider,
                 &listeners,
                 ConsumerMode::CollectLatest { count: self.config.count },
+                max_stream_capacity,
             )
             .await;
         });

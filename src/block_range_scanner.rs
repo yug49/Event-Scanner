@@ -125,6 +125,7 @@ impl IntoScannerResult<RangeInclusive<BlockNumber>> for RangeInclusive<BlockNumb
 pub struct BlockRangeScanner {
     pub max_block_range: u64,
     pub past_blocks_storage_capacity: RingBufferCapacity,
+    pub max_stream_capacity: usize,
 }
 
 impl Default for BlockRangeScanner {
@@ -139,6 +140,7 @@ impl BlockRangeScanner {
         Self {
             max_block_range: DEFAULT_MAX_BLOCK_RANGE,
             past_blocks_storage_capacity: RingBufferCapacity::Limited(10),
+            max_stream_capacity: MAX_BUFFERED_MESSAGES,
         }
     }
 
@@ -157,6 +159,21 @@ impl BlockRangeScanner {
         self
     }
 
+    /// Sets the maximum capacity for internal message channels.
+    ///
+    /// This controls the buffer size for channels used to stream block ranges.
+    /// Higher values allow more messages to be buffered, which can help with
+    /// throughput at the cost of memory usage.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_stream_capacity` - Maximum number of messages to buffer (must be greater than 0)
+    #[must_use]
+    pub fn max_stream_capacity(mut self, max_stream_capacity: usize) -> Self {
+        self.max_stream_capacity = max_stream_capacity;
+        self
+    }
+
     /// Connects to an existing provider
     ///
     /// # Errors
@@ -171,6 +188,7 @@ impl BlockRangeScanner {
             provider,
             max_block_range: self.max_block_range,
             past_blocks_storage_capacity: self.past_blocks_storage_capacity,
+            max_stream_capacity: self.max_stream_capacity,
         })
     }
 }
@@ -179,6 +197,7 @@ pub struct ConnectedBlockRangeScanner<N: Network> {
     provider: RobustProvider<N>,
     max_block_range: u64,
     past_blocks_storage_capacity: RingBufferCapacity,
+    max_stream_capacity: usize,
 }
 
 impl<N: Network> ConnectedBlockRangeScanner<N> {
@@ -186,6 +205,12 @@ impl<N: Network> ConnectedBlockRangeScanner<N> {
     #[must_use]
     pub fn provider(&self) -> &RobustProvider<N> {
         &self.provider
+    }
+
+    /// Returns the maximum stream capacity.
+    #[must_use]
+    pub fn max_stream_capacity(&self) -> usize {
+        self.max_stream_capacity
     }
 
     /// Starts the subscription service and returns a client for sending commands.
@@ -202,7 +227,7 @@ impl<N: Network> ConnectedBlockRangeScanner<N> {
         tokio::spawn(async move {
             service.run().await;
         });
-        Ok(BlockRangeScannerClient::new(cmd_tx))
+        Ok(BlockRangeScannerClient::new(cmd_tx, self.max_stream_capacity))
     }
 }
 
@@ -532,6 +557,7 @@ impl<N: Network> Service<N> {
 
 pub struct BlockRangeScannerClient {
     command_sender: mpsc::Sender<Command>,
+    max_stream_capacity: usize,
 }
 
 impl BlockRangeScannerClient {
@@ -540,9 +566,10 @@ impl BlockRangeScannerClient {
     /// # Arguments
     ///
     /// * `command_sender` - The sender for sending commands to the subscription service.
+    /// * `max_stream_capacity` - Maximum capacity for message channels.
     #[must_use]
-    pub fn new(command_sender: mpsc::Sender<Command>) -> Self {
-        Self { command_sender }
+    pub fn new(command_sender: mpsc::Sender<Command>, max_stream_capacity: usize) -> Self {
+        Self { command_sender, max_stream_capacity }
     }
 
     /// Streams live blocks starting from the latest block.
@@ -558,7 +585,7 @@ impl BlockRangeScannerClient {
         &self,
         block_confirmations: u64,
     ) -> Result<ReceiverStream<BlockScannerResult>, ScannerError> {
-        let (blocks_sender, blocks_receiver) = mpsc::channel(MAX_BUFFERED_MESSAGES);
+        let (blocks_sender, blocks_receiver) = mpsc::channel(self.max_stream_capacity);
         let (response_tx, response_rx) = oneshot::channel();
 
         let command = Command::StreamLive {
@@ -589,7 +616,7 @@ impl BlockRangeScannerClient {
         start_id: impl Into<BlockId>,
         end_id: impl Into<BlockId>,
     ) -> Result<ReceiverStream<BlockScannerResult>, ScannerError> {
-        let (blocks_sender, blocks_receiver) = mpsc::channel(MAX_BUFFERED_MESSAGES);
+        let (blocks_sender, blocks_receiver) = mpsc::channel(self.max_stream_capacity);
         let (response_tx, response_rx) = oneshot::channel();
 
         let command = Command::StreamHistorical {
@@ -621,7 +648,7 @@ impl BlockRangeScannerClient {
         start_id: impl Into<BlockId>,
         block_confirmations: u64,
     ) -> Result<ReceiverStream<BlockScannerResult>, ScannerError> {
-        let (blocks_sender, blocks_receiver) = mpsc::channel(MAX_BUFFERED_MESSAGES);
+        let (blocks_sender, blocks_receiver) = mpsc::channel(self.max_stream_capacity);
         let (response_tx, response_rx) = oneshot::channel();
 
         let command = Command::StreamFrom {
@@ -653,7 +680,7 @@ impl BlockRangeScannerClient {
         start_id: impl Into<BlockId>,
         end_id: impl Into<BlockId>,
     ) -> Result<ReceiverStream<BlockScannerResult>, ScannerError> {
-        let (blocks_sender, blocks_receiver) = mpsc::channel(MAX_BUFFERED_MESSAGES);
+        let (blocks_sender, blocks_receiver) = mpsc::channel(self.max_stream_capacity);
         let (response_tx, response_rx) = oneshot::channel();
 
         let command = Command::Rewind {
@@ -682,6 +709,7 @@ mod tests {
         let scanner = BlockRangeScanner::new();
 
         assert_eq!(scanner.max_block_range, DEFAULT_MAX_BLOCK_RANGE);
+        assert_eq!(scanner.max_stream_capacity, MAX_BUFFERED_MESSAGES);
     }
 
     #[test]
@@ -691,6 +719,15 @@ mod tests {
         let scanner = BlockRangeScanner::new().max_block_range(max_block_range);
 
         assert_eq!(scanner.max_block_range, max_block_range);
+    }
+
+    #[test]
+    fn max_stream_capacity_builder_updates_configuration() {
+        let capacity = 1000;
+
+        let scanner = BlockRangeScanner::new().max_stream_capacity(capacity);
+
+        assert_eq!(scanner.max_stream_capacity, capacity);
     }
 
     #[tokio::test]
