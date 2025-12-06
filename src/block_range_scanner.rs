@@ -86,7 +86,7 @@ mod reorg_handler;
 mod ring_buffer;
 mod sync_handler;
 
-use reorg_handler::ReorgHandler;
+use reorg_handler::{DefaultReorgHandler, ReorgHandler};
 pub use ring_buffer::RingBufferCapacity;
 
 pub const DEFAULT_MAX_BLOCK_RANGE: u64 = 1000;
@@ -331,7 +331,7 @@ impl<N: Network> Service<N> {
 
         tokio::spawn(async move {
             let mut reorg_handler =
-                ReorgHandler::new(provider.clone(), past_blocks_storage_capacity);
+                DefaultReorgHandler::new(provider.clone(), past_blocks_storage_capacity);
 
             common::stream_live_blocks(
                 range_start,
@@ -378,7 +378,7 @@ impl<N: Network> Service<N> {
 
         tokio::spawn(async move {
             let mut reorg_handler =
-                ReorgHandler::new(provider.clone(), past_blocks_storage_capacity);
+                DefaultReorgHandler::new(provider.clone(), past_blocks_storage_capacity);
 
             _ = common::stream_historical_range(
                 start_block_num,
@@ -432,7 +432,7 @@ impl<N: Network> Service<N> {
 
         tokio::spawn(async move {
             let mut reorg_handler =
-                ReorgHandler::new(provider.clone(), past_blocks_storage_capacity);
+                DefaultReorgHandler::new(provider.clone(), past_blocks_storage_capacity);
 
             Self::stream_rewind(from, to, max_block_range, &sender, &provider, &mut reorg_handler)
                 .await;
@@ -448,13 +448,13 @@ impl<N: Network> Service<N> {
     /// # Errors
     ///
     /// Returns an error if the stream fails
-    async fn stream_rewind(
+    async fn stream_rewind<R: ReorgHandler<N>>(
         from: N::BlockResponse,
         to: N::BlockResponse,
         max_block_range: u64,
         sender: &mpsc::Sender<BlockScannerResult>,
         provider: &RobustProvider<N>,
-        reorg_handler: &mut ReorgHandler<N>,
+        reorg_handler: &mut R,
     ) {
         let mut batch_count = 0;
 
