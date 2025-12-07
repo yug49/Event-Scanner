@@ -333,7 +333,6 @@ pub(crate) async fn stream_historical_range<N: Network>(
     max_block_range: u64,
     sender: &mpsc::Sender<BlockScannerResult>,
     provider: &RobustProvider<N>,
-    reorg_handler: &mut ReorgHandler<N>,
 ) -> Option<()> {
     info!("Getting finalized block number");
     let finalized = match provider.get_block_number_by_id(BlockNumberOrTag::Finalized.into()).await
@@ -346,7 +345,7 @@ pub(crate) async fn stream_historical_range<N: Network>(
         }
     };
 
-    // no reorg check for finalized blocks
+    // Phase 1: Stream all finalized blocks without any reorg checks
     let mut batch_start = start;
     let finalized_batch_end = finalized.min(end);
     while batch_start <= finalized_batch_end {
@@ -364,29 +363,73 @@ pub(crate) async fn stream_historical_range<N: Network>(
         return Some(()); // we're done
     }
 
-    // we have non-finalized block numbers to stream, a reorg can occur
+    // Phase 2: Stream non-finalized blocks, then check for reorg only after the last range.
+    // If a reorg occurred, re-stream all non-finalized blocks. Repeat until stable.
+    let non_finalized_start = batch_start;
 
-    // Possible minimal common ancestors when a reorg occurs:
-    // * start > finalized -> the common ancestor we care about is the block before `start`, that's
-    //   where the stream should restart -> this is why we used `start - 1`
-    // * start == finalized -> `start` should never be re-streamed on reorgs; stream should restart
-    //   on `start + 1`
-    // * start < finalized -> if we got here, then `end > finalized`; on reorg, we should only
-    //   re-stream non-finalized blocks
-    let min_common_ancestor = (start.saturating_sub(1)).max(finalized);
+    loop {
+        // Stream all non-finalized ranges without intermediate reorg checks
+        let mut batch_start = non_finalized_start;
+        let mut batch_count = 0u32;
 
-    stream_range_with_reorg_handling(
-        min_common_ancestor,
-        batch_start,
-        end,
-        max_block_range,
-        sender,
-        provider,
-        reorg_handler,
-    )
-    .await?;
+        while batch_start <= end {
+            let batch_end = batch_start.saturating_add(max_block_range - 1).min(end);
 
-    Some(())
+            if !sender.try_stream(batch_start..=batch_end).await {
+                return None; // channel closed
+            }
+
+            batch_count += 1;
+            if batch_count % 10 == 0 {
+                debug!(batch_count = batch_count, "Processed non-finalized batches");
+            }
+
+            batch_start = batch_end + 1;
+        }
+
+        // After streaming the last range, check if end block still exists (reorg check)
+        match provider.get_block_by_number(end.into()).await {
+            Ok(_) => {
+                // End block exists, no reorg - we're done
+                info!(batch_count = batch_count, "Historical sync completed");
+                return Some(());
+            }
+            Err(crate::robust_provider::provider::Error::BlockNotFound(_)) => {
+                // Reorg detected: end block no longer exists
+                warn!(
+                    end_block = end,
+                    "Reorg detected after streaming last range, re-streaming non-finalized blocks"
+                );
+
+                if !sender.try_stream(Notification::ReorgDetected).await {
+                    return None; // channel closed
+                }
+
+                // Re-stream all non-finalized blocks in the next iteration
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to verify end block");
+                _ = sender.try_stream(e).await;
+                return None;
+            }
+        }
+
+        // Check if finalized has advanced past end (all blocks now finalized)
+        let current_finalized =
+            match provider.get_block_number_by_id(BlockNumberOrTag::Finalized.into()).await {
+                Ok(block) => block,
+                Err(e) => {
+                    error!(error = %e, "Failed to get updated finalized block");
+                    _ = sender.try_stream(e).await;
+                    return None;
+                }
+            };
+
+        if current_finalized >= end {
+            info!(finalized = current_finalized, end = end, "End block is now finalized");
+            return Some(());
+        }
+    }
 }
 
 /// Assumes that `min_common_ancestor <= next_start_block <= end`, performs no internal checks.

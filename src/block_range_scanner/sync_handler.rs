@@ -123,7 +123,6 @@ impl<N: Network> SyncHandler<N> {
                 max_block_range,
                 &sender,
                 &provider,
-                &mut reorg_handler,
             )
             .await
             {
@@ -160,7 +159,6 @@ impl<N: Network> SyncHandler<N> {
         max_block_range: u64,
         sender: &mpsc::Sender<BlockScannerResult>,
         provider: &RobustProvider<N>,
-        reorg_handler: &mut ReorgHandler<N>,
     ) -> Result<Option<BlockNumber>, ScannerError> {
         while start_block < confirmed_tip {
             if common::stream_historical_range(
@@ -169,7 +167,6 @@ impl<N: Network> SyncHandler<N> {
                 max_block_range,
                 sender,
                 provider,
-                reorg_handler,
             )
             .await
             .is_none()
