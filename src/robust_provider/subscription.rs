@@ -1012,6 +1012,9 @@ mod tests {
 
         let mut subscription = robust.subscribe_blocks().await?;
 
+        // Brief delay to ensure subscription is fully established before mining
+        sleep(BUFFER_TIME).await;
+
         // Mine more blocks than channel can hold without consuming
         provider.anvil_mine(Some(MAX_CHANNEL_SIZE as u64 + 1), None).await?;
 
