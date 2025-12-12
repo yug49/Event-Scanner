@@ -1,7 +1,7 @@
 use std::ops::RangeInclusive;
 
 use crate::{
-    Notification, ScannerMessage,
+    Message, Notification, ScannerError, ScannerMessage,
     block_range_scanner::{BlockScannerResult, MAX_BUFFERED_MESSAGES},
     event_scanner::{filter::EventFilter, listener::EventListener},
     robust_provider::{RobustProvider, provider::Error as RobustProviderError},
@@ -11,15 +11,19 @@ use alloy::{
     network::Network,
     rpc::types::{Filter, Log},
 };
+use futures::StreamExt;
 use tokio::{
-    sync::broadcast::{self, Sender, error::RecvError},
+    sync::{
+        broadcast::{self, Sender, error::RecvError},
+        mpsc,
+    },
     task::JoinSet,
 };
-use tokio_stream::{Stream, StreamExt};
-use tracing::{error, info, warn};
+use tokio_stream::{Stream, wrappers::ReceiverStream};
+use tracing::{debug, error, info, warn};
 
 #[derive(Copy, Clone, Debug)]
-pub enum ConsumerMode {
+pub(crate) enum ConsumerMode {
     Stream,
     CollectLatest { count: usize },
 }
@@ -46,16 +50,22 @@ pub enum ConsumerMode {
 /// # Note
 ///
 /// Assumes it is running in a separate tokio task, so as to be non-blocking.
-pub async fn handle_stream<N: Network, S: Stream<Item = BlockScannerResult> + Unpin>(
+pub(crate) async fn handle_stream<N: Network, S: Stream<Item = BlockScannerResult> + Unpin>(
     mut stream: S,
     provider: &RobustProvider<N>,
     listeners: &[EventListener],
     mode: ConsumerMode,
+    max_concurrent_fetches: usize,
 ) {
     let (range_tx, _) = broadcast::channel::<BlockScannerResult>(MAX_BUFFERED_MESSAGES);
 
     let consumers = match mode {
-        ConsumerMode::Stream => spawn_log_consumers_in_stream_mode(provider, listeners, &range_tx),
+        ConsumerMode::Stream => spawn_log_consumers_in_stream_mode(
+            provider,
+            listeners,
+            &range_tx,
+            max_concurrent_fetches,
+        ),
         ConsumerMode::CollectLatest { count } => {
             spawn_log_consumers_in_collection_mode(provider, listeners, &range_tx, count)
         }
@@ -76,10 +86,11 @@ pub async fn handle_stream<N: Network, S: Stream<Item = BlockScannerResult> + Un
 }
 
 #[must_use]
-pub fn spawn_log_consumers_in_stream_mode<N: Network>(
+fn spawn_log_consumers_in_stream_mode<N: Network>(
     provider: &RobustProvider<N>,
     listeners: &[EventListener],
     range_tx: &Sender<BlockScannerResult>,
+    max_concurrent_fetches: usize,
 ) -> JoinSet<()> {
     listeners.iter().cloned().fold(JoinSet::new(), |mut set, listener| {
         let EventListener { filter, sender } = listener;
@@ -89,48 +100,64 @@ pub fn spawn_log_consumers_in_stream_mode<N: Network>(
         let mut range_rx = range_tx.subscribe();
 
         set.spawn(async move {
+            // We use a channel and convert the receiver to a stream because it already has a
+            // convenience function `buffered` for concurrently handling block ranges, while
+            // outputting results in the same order as they were received.
+            let (tx, rx) = mpsc::channel::<BlockScannerResult>(max_concurrent_fetches);
+
+            // Process block ranges concurrently in a separate thread so that the current thread can
+            // continue receiving and buffering subsequent block ranges while the previous ones are
+            // being processed.
+            tokio::spawn(async move {
+                let mut stream = ReceiverStream::new(rx)
+                    .map(async |message| match message {
+                        Ok(ScannerMessage::Data(range)) => {
+                            get_logs(range, &filter, &base_filter, &provider)
+                                .await
+                                .map(Message::from)
+                                .map_err(ScannerError::from)
+                        }
+                        Ok(ScannerMessage::Notification(notification)) => Ok(notification.into()),
+                        // No need to stop the stream on an error, because that decision is up to
+                        // the caller.
+                        Err(e) => Err(e),
+                    })
+                    .buffered(max_concurrent_fetches);
+
+                // process all of the buffered results
+                while let Some(result) = stream.next().await {
+                    if let Ok(ScannerMessage::Data(logs)) = result.as_ref() &&
+                        logs.is_empty()
+                    {
+                        continue;
+                    }
+
+                    if !sender.try_stream(result).await {
+                        return;
+                    }
+                }
+            });
+
+            // Receive block ranges from the broadcast channel and send them to the range processor
+            // for parallel processing.
             loop {
                 match range_rx.recv().await {
-                    Ok(message) => match message {
-                        Ok(ScannerMessage::Data(range)) => {
-                            match get_logs(range, &filter, &base_filter, &provider).await {
-                                Ok(logs) => {
-                                    if logs.is_empty() {
-                                        continue;
-                                    }
-
-                                    if !sender.try_stream(logs).await {
-                                        return;
-                                    }
-                                }
-                                Err(e) => {
-                                    error!(error = ?e, "Received error message");
-                                    if !sender.try_stream(e).await {
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                        Ok(ScannerMessage::Notification(notification)) => {
-                            info!(notification = ?notification, "Received notification");
-                            if !sender.try_stream(notification).await {
-                                return;
-                            }
-                        }
-                        Err(e) => {
-                            error!(error = ?e, "Received error message");
-                            if !sender.try_stream(e).await {
-                                return;
-                            }
-                        }
-                    },
+                    Ok(message) => {
+                        tx.send(message).await.expect("receiver dropped only if we exit this loop");
+                    }
                     Err(RecvError::Closed) => {
-                        info!("No block ranges to receive, dropping receiver.");
+                        debug!("No more block ranges to receive");
                         break;
                     }
-                    Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Lagged(skipped)) => {
+                        debug!("Channel lagged, skipped {skipped} messages");
+                    }
                 }
             }
+
+            // Drop the local channel sender to signal to the range processor that streaming is
+            // done.
+            drop(tx);
         });
 
         set
@@ -138,7 +165,7 @@ pub fn spawn_log_consumers_in_stream_mode<N: Network>(
 }
 
 #[must_use]
-pub fn spawn_log_consumers_in_collection_mode<N: Network>(
+fn spawn_log_consumers_in_collection_mode<N: Network>(
     provider: &RobustProvider<N>,
     listeners: &[EventListener],
     range_tx: &Sender<BlockScannerResult>,
