@@ -24,3 +24,7 @@ workspace = true
 [[bench]]
 name = "historic_scanning"
 harness = false
+
+[[bench]]
+name = "latest_events_scanning"
+harness = false
