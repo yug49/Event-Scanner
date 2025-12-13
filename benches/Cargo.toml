@@ -1,0 +1,26 @@
+[package]
+name = "event-scanner-benches"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+event-scanner = { path = ".." }
+alloy.workspace = true
+alloy-node-bindings.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "historic_scanning"
+harness = false
