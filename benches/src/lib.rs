@@ -68,18 +68,11 @@ pub struct BenchConfig {
     pub block_time: f64,
 }
 
-impl Default for BenchConfig {
-    fn default() -> Self {
-        Self { event_count: 1_000, block_time: 0.01 }
-    }
-}
-
 impl BenchConfig {
     /// Creates a new configuration with the specified event count.
     #[must_use]
-    pub fn with_event_count(mut self, count: usize) -> Self {
-        self.event_count = count;
-        self
+    pub fn new(event_count: usize) -> Self {
+        Self { event_count, block_time: 0.01 }
     }
 }
 

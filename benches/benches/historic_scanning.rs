@@ -9,10 +9,10 @@ use event_scanner_benches::{
 };
 use tokio_stream::StreamExt;
 
-/// Runs a single historic scan and returns the number of events received.
+/// Runs a single historic scan and asserts the expected event count.
 ///
 /// This fetches ALL events from block 0 to latest
-async fn run_historic_scan(env: &BenchEnvironment) -> usize {
+async fn run_historic_scan(env: &BenchEnvironment, expected_count: usize) {
     let filter = EventFilter::new()
         .contract_address(env.contract_address)
         .event(count_increased_signature());
@@ -43,7 +43,7 @@ async fn run_historic_scan(env: &BenchEnvironment) -> usize {
         }
     }
 
-    log_count
+    assert_eq!(log_count, expected_count, "expected {expected_count} events, got {log_count}");
 }
 
 fn historic_scanning_benchmark(c: &mut Criterion) {
@@ -64,22 +64,16 @@ fn historic_scanning_benchmark(c: &mut Criterion) {
 
         // Setup environment once per event count (events are pre-generated)
         let env: BenchEnvironment = rt.block_on(async {
-            let config = BenchConfig::default().with_event_count(event_count);
+            let config = BenchConfig::new(event_count);
             setup_environment(config).await.expect("failed to setup benchmark environment")
         });
 
-        println!("Environment ready. Verifying event count...");
-
-        // Verify setup correctness before benchmarking
-        let actual_count = rt.block_on(run_historic_scan(&env));
-        assert_eq!(actual_count, event_count, "expected {event_count} events, got {actual_count}");
-
-        println!("Verified {event_count} events. Starting benchmark...");
+        println!("Environment ready. Starting benchmark...");
 
         group.throughput(Throughput::Elements(event_count as u64));
 
         group.bench_with_input(BenchmarkId::new("events", event_count), &env, |b, env| {
-            b.to_async(&rt).iter(|| run_historic_scan(env));
+            b.to_async(&rt).iter(|| run_historic_scan(env, event_count));
         });
     }
 

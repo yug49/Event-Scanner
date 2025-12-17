@@ -10,10 +10,10 @@ use event_scanner_benches::{
 };
 use tokio_stream::StreamExt;
 
-/// Runs a single latest events scan and returns the number of events received.
+/// Runs a single latest events scan and asserts the expected event count.
 ///
-/// This fetches the `latest_count` most recent events from the environment.
-async fn run_latest_events_scan(env: &BenchEnvironment, latest_count: usize) -> usize {
+/// This fetches the `latest_count` most recent events.
+async fn run_latest_events_scan(env: &BenchEnvironment, latest_count: usize) {
     let filter = EventFilter::new()
         .contract_address(env.contract_address)
         .event(count_increased_signature());
@@ -41,7 +41,7 @@ async fn run_latest_events_scan(env: &BenchEnvironment, latest_count: usize) -> 
         }
     }
 
-    log_count
+    assert_eq!(log_count, latest_count, "expected {latest_count} events, got {log_count}");
 }
 
 fn latest_events_scanning_benchmark(c: &mut Criterion) {
@@ -62,29 +62,20 @@ fn latest_events_scanning_benchmark(c: &mut Criterion) {
     println!("Setting up environment with {total_events} total events...");
 
     let env: BenchEnvironment = rt.block_on(async {
-        let config = BenchConfig::default().with_event_count(total_events);
+        let config = BenchConfig::new(total_events);
         setup_environment(config).await.expect("failed to setup benchmark environment")
     });
 
     println!("Environment ready. Starting benchmarks...");
 
     // Benchmark fetching different "latest N" counts
-    // These represent realistic use cases:
+    // Trying to replicate realistic use cases:
     // - 100: Quick recent activity check
     // - 1,000: Moderate history lookup
     // - 10,000: Substantial history fetch
     // - 50,000: Heavy load retrieval
     for latest_count in [100, 1_000, 10_000, 50_000] {
-        println!("Verifying latest {latest_count} events scan...");
-
-        // Verify setup correctness before benchmarking
-        let actual_count = rt.block_on(run_latest_events_scan(&env, latest_count));
-        assert_eq!(
-            actual_count, latest_count,
-            "expected {latest_count} events, got {actual_count}"
-        );
-
-        println!("Verified {latest_count} events. Starting benchmark...");
+        println!("Benchmarking latest {latest_count} events...");
 
         group.throughput(Throughput::Elements(latest_count as u64));
 
