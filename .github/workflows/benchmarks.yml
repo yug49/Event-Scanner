@@ -1,9 +1,18 @@
 name: Benchmarks
 
-# Runs benchmarks on-demand (manual dispatch) to track performance
-# and detect regressions in the Event Scanner.
+# Runs benchmarks to track performance and detect regressions.
+# - On push to main: automatically updates baseline in Bencher
+# - On manual dispatch: run specific benchmarks on-demand
 
 on:
+  push:
+    branches: [main]
+    paths:
+      # Only run benchmarks if relevant code changes
+      - "src/**"
+      - "benches/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
   workflow_dispatch:
     inputs:
       benchmark:
@@ -28,7 +37,8 @@ jobs:
   benchmark_historic:
     name: Run Historic Benchmarks
     runs-on: ubuntu-latest
-    if: ${{ inputs.benchmark == 'all' || inputs.benchmark == 'historic_scanning' }}
+    # Run on push to main, or when manually selecting 'all' or 'historic_scanning'
+    if: ${{ github.event_name == 'push' || inputs.benchmark == 'all' || inputs.benchmark == 'historic_scanning' }}
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -82,7 +92,8 @@ jobs:
   benchmark_latest:
     name: Run Latest Events Benchmarks
     runs-on: ubuntu-latest
-    if: ${{ inputs.benchmark == 'all' || inputs.benchmark == 'latest_events_scanning' }}
+    # Run on push to main, or when manually selecting 'all' or 'latest_events_scanning'
+    if: ${{ github.event_name == 'push' || inputs.benchmark == 'all' || inputs.benchmark == 'latest_events_scanning' }}
 
     steps:
       - name: Harden the runner (Audit all outbound calls)

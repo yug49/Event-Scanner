@@ -76,4 +76,5 @@ jobs:
             --adapter rust_criterion \
             --github-actions "${{ secrets.GITHUB_TOKEN }}" \
             --ci-number "$PR_NUMBER" \
+            --ci-only \
             --file "$BENCHMARK_RESULTS"
