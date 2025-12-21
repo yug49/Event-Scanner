@@ -1,0 +1,59 @@
+name: Run PR Benchmarks
+
+# This workflow runs benchmarks on pull requests and caches the results.
+# For security, benchmark results are uploaded as artifacts and tracked
+# by a separate workflow (pr_benchmarks_track.yml) that has access to secrets.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      # Only run benchmarks if relevant code changes
+      - "src/**"
+      - "benches/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark_pr:
+    name: Run PR Benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+
+      - name: Install Foundry (Anvil)
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Run benchmarks
+        run: |
+          cargo bench --manifest-path benches/Cargo.toml -- --noplot 2>&1 | tee benchmark_results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: benchmark_results.txt
+          path: ./benchmark_results.txt
+
+      - name: Upload PR event
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: event.json
+          path: ${{ github.event_path }}

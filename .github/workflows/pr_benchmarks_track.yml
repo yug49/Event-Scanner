@@ -1,0 +1,79 @@
+name: Track PR Benchmarks
+
+# This workflow tracks benchmark results from pull requests using Bencher.
+# It runs after the pr_benchmarks_run.yml workflow completes successfully.
+# This separation is required for security when handling fork PRs, as secrets
+# are not available in the context of fork PR workflows.
+
+on:
+  workflow_run:
+    workflows: [Run PR Benchmarks]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  BENCHMARK_RESULTS: benchmark_results.txt
+  PR_EVENT: event.json
+
+jobs:
+  track_pr_benchmarks:
+    name: Track PR Benchmarks with Bencher
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        with:
+          egress-policy: audit
+
+      - name: Download benchmark results
+        uses: dawidd6/action-download-artifact@20319c5641d495c8a52e688b7dc5fada6c3a9fbc # v8
+        with:
+          name: ${{ env.BENCHMARK_RESULTS }}
+          run_id: ${{ github.event.workflow_run.id }}
+
+      - name: Download PR event
+        uses: dawidd6/action-download-artifact@20319c5641d495c8a52e688b7dc5fada6c3a9fbc # v8
+        with:
+          name: ${{ env.PR_EVENT }}
+          run_id: ${{ github.event.workflow_run.id }}
+
+      - name: Export PR event data
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const fs = require('fs');
+            const prEvent = JSON.parse(fs.readFileSync(process.env.PR_EVENT, { encoding: 'utf8' }));
+            core.exportVariable('PR_NUMBER', prEvent.number);
+            core.exportVariable('PR_HEAD', prEvent.pull_request.head.ref);
+            core.exportVariable('PR_HEAD_SHA', prEvent.pull_request.head.sha);
+            core.exportVariable('PR_BASE', prEvent.pull_request.base.ref);
+            core.exportVariable('PR_BASE_SHA', prEvent.pull_request.base.sha);
+
+      - name: Install Bencher CLI
+        uses: bencherdev/bencher@main
+
+      - name: Track PR benchmarks with Bencher
+        env:
+          BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
+          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT }}
+        run: |
+          bencher run \
+            --project "$BENCHER_PROJECT" \
+            --token "$BENCHER_API_TOKEN" \
+            --branch "$PR_HEAD" \
+            --hash "$PR_HEAD_SHA" \
+            --start-point "$PR_BASE" \
+            --start-point-hash "$PR_BASE_SHA" \
+            --start-point-clone-thresholds \
+            --start-point-reset \
+            --testbed ubuntu-latest \
+            --err \
+            --adapter rust_criterion \
+            --github-actions "${{ secrets.GITHUB_TOKEN }}" \
+            --ci-number "$PR_NUMBER" \
+            --file "$BENCHMARK_RESULTS"
