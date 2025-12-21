@@ -76,7 +76,7 @@ jobs:
           bencher run \
             --project "$BENCHER_PROJECT" \
             --token "$BENCHER_API_TOKEN" \
-            --branch main \
+            --branch "${{ github.ref_name }}" \
             --testbed ubuntu-latest \
             --threshold-measure latency \
             --threshold-test t_test \
@@ -131,7 +131,7 @@ jobs:
           bencher run \
             --project "$BENCHER_PROJECT" \
             --token "$BENCHER_API_TOKEN" \
-            --branch main \
+            --branch "${{ github.ref_name }}" \
             --testbed ubuntu-latest \
             --threshold-measure latency \
             --threshold-test t_test \
