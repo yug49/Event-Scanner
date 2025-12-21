@@ -15,7 +15,6 @@ use thiserror::Error;
 use tokio::{sync::broadcast::error::RecvError, time::timeout};
 use tokio_stream::Stream;
 use tokio_util::sync::ReusableBoxFuture;
-use tracing::{error, info, warn};
 
 use crate::robust_provider::{RobustProvider, provider::CoreError};
 
@@ -278,7 +277,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    use crate::robust_provider::{RobustProviderBuilder, provider::MAX_CHANNEL_SIZE};
+    use crate::robust_provider::{DEFAULT_SUBSCRIPTION_BUFFER_CAPACITY, RobustProviderBuilder};
     use alloy::{
         network::Ethereum,
         providers::{Provider, ProviderBuilder, RootProvider, ext::AnvilApi},
@@ -1013,7 +1012,7 @@ mod tests {
         let mut subscription = robust.subscribe_blocks().await?;
 
         // Mine more blocks than channel can hold without consuming
-        provider.anvil_mine(Some(MAX_CHANNEL_SIZE as u64 + 1), None).await?;
+        provider.anvil_mine(Some(DEFAULT_SUBSCRIPTION_BUFFER_CAPACITY as u64 + 1), None).await?;
 
         // Allow time for block notifications to propagate through WebSocket
         // and fill the subscription channel

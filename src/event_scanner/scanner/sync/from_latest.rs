@@ -1,7 +1,5 @@
 use alloy::{eips::BlockNumberOrTag, network::Network};
 
-use tracing::{error, info};
-
 use crate::{
     EventScannerBuilder, ScannerError,
     event_scanner::{
@@ -16,6 +14,11 @@ use crate::{
 };
 
 impl EventScannerBuilder<SyncFromLatestEvents> {
+    /// Sets the number of confirmations required before a block is considered stable enough to
+    /// scan in the live phase.
+    ///
+    /// This affects the post-sync live streaming phase; higher values reduce reorg risk at the
+    /// cost of increased event delivery latency.
     #[must_use]
     pub fn block_confirmations(mut self, confirmations: u64) -> Self {
         self.config.block_confirmations = confirmations;
@@ -62,29 +65,23 @@ impl EventScannerBuilder<SyncFromLatestEvents> {
 }
 
 impl<N: Network> EventScanner<SyncFromLatestEvents, N> {
-    /// Starts the scanner.
+    /// Starts the scanner in [`SyncFromLatestEvents`] mode.
     ///
-    /// # Important notes
-    ///
-    /// * Register event streams via [`scanner.subscribe(filter)`][subscribe] **before** calling
-    ///   this function.
-    /// * The method returns immediately; events are delivered asynchronously.
+    /// See [`EventScanner`] for general startup notes.
     ///
     /// # Errors
     ///
-    /// Can error out if the service fails to start.
-    ///
-    /// [subscribe]: EventScanner::subscribe
+    /// * [`ScannerError::Timeout`] - if an RPC call required for startup times out.
+    /// * [`ScannerError::RpcError`] - if an RPC call required for startup fails.
     #[allow(clippy::missing_panics_doc)]
-    pub async fn start(self) -> Result<(), ScannerError> {
+    pub async fn start(mut self) -> Result<(), ScannerError> {
         let count = self.config.count;
         let provider = self.block_range_scanner.provider().clone();
         let listeners = self.listeners.clone();
         let max_concurrent_fetches = self.config.max_concurrent_fetches;
+        let buffer_capacity = self.buffer_capacity();
 
         info!(count = count, "Starting scanner, mode: fetch latest events and switch to live");
-
-        let client = self.block_range_scanner.run()?;
 
         // Fetch the latest block number.
         // This is used to determine the starting point for the rewind stream and the live
@@ -93,7 +90,10 @@ impl<N: Network> EventScanner<SyncFromLatestEvents, N> {
         let latest_block = provider.get_block_number().await?;
 
         // Setup rewind and live streams to run in parallel.
-        let rewind_stream = client.rewind(latest_block, BlockNumberOrTag::Earliest).await?;
+        let rewind_stream = self
+            .block_range_scanner
+            .stream_rewind(latest_block, BlockNumberOrTag::Earliest)
+            .await?;
 
         // Start streaming...
         tokio::spawn(async move {
@@ -107,23 +107,27 @@ impl<N: Network> EventScanner<SyncFromLatestEvents, N> {
                 &listeners,
                 ConsumerMode::CollectLatest { count },
                 max_concurrent_fetches,
+                buffer_capacity,
             )
             .await;
 
             // We actually rely on the sync mode for the live stream, as more blocks could have been
             // minted while the scanner was collecting the latest `count` events.
             // Note: Sync mode will notify the client when it switches to live streaming.
-            let sync_stream =
-                match client.stream_from(latest_block + 1, self.config.block_confirmations).await {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        error!(error = %e, "Error during sync mode setup");
-                        for listener in listeners {
-                            _ = listener.sender.try_stream(e.clone()).await;
-                        }
-                        return;
+            let sync_stream = match self
+                .block_range_scanner
+                .stream_from(latest_block + 1, self.config.block_confirmations)
+                .await
+            {
+                Ok(stream) => stream,
+                Err(e) => {
+                    error!(error = %e, "Error during sync mode setup");
+                    for listener in listeners {
+                        _ = listener.sender.try_stream(e.clone()).await;
                     }
-                };
+                    return;
+                }
+            };
 
             // Start the live (sync) stream.
             handle_stream(
@@ -132,6 +136,7 @@ impl<N: Network> EventScanner<SyncFromLatestEvents, N> {
                 &listeners,
                 ConsumerMode::Stream,
                 max_concurrent_fetches,
+                buffer_capacity,
             )
             .await;
         });
@@ -150,6 +155,7 @@ mod tests {
     use alloy_node_bindings::Anvil;
 
     use crate::{
+        DEFAULT_STREAM_BUFFER_CAPACITY,
         block_range_scanner::{DEFAULT_BLOCK_CONFIRMATIONS, DEFAULT_MAX_BLOCK_RANGE},
         event_scanner::scanner::DEFAULT_MAX_CONCURRENT_FETCHES,
     };
@@ -162,12 +168,14 @@ mod tests {
             .from_latest(1)
             .block_confirmations(2)
             .max_block_range(50)
-            .max_concurrent_fetches(10);
+            .max_concurrent_fetches(10)
+            .buffer_capacity(33);
 
         assert_eq!(builder.config.count, 1);
         assert_eq!(builder.config.block_confirmations, 2);
         assert_eq!(builder.block_range_scanner.max_block_range, 50);
         assert_eq!(builder.config.max_concurrent_fetches, 10);
+        assert_eq!(builder.block_range_scanner.buffer_capacity, 33);
     }
 
     #[test]
@@ -178,6 +186,7 @@ mod tests {
         assert_eq!(builder.config.block_confirmations, DEFAULT_BLOCK_CONFIRMATIONS);
         assert_eq!(builder.block_range_scanner.max_block_range, DEFAULT_MAX_BLOCK_RANGE);
         assert_eq!(builder.config.max_concurrent_fetches, DEFAULT_MAX_CONCURRENT_FETCHES);
+        assert_eq!(builder.block_range_scanner.buffer_capacity, DEFAULT_STREAM_BUFFER_CAPACITY);
     }
 
     #[test]
@@ -190,12 +199,15 @@ mod tests {
             .block_confirmations(2)
             .block_confirmations(3)
             .max_concurrent_fetches(10)
-            .max_concurrent_fetches(20);
+            .max_concurrent_fetches(20)
+            .buffer_capacity(20)
+            .buffer_capacity(40);
 
         assert_eq!(builder.config.count, 1);
         assert_eq!(builder.block_range_scanner.max_block_range, 105);
         assert_eq!(builder.config.block_confirmations, 3);
         assert_eq!(builder.config.max_concurrent_fetches, 20);
+        assert_eq!(builder.block_range_scanner.buffer_capacity, 40);
     }
 
     #[tokio::test]
@@ -247,5 +259,14 @@ mod tests {
             Err(ScannerError::InvalidMaxBlockRange) => {}
             _ => panic!("Expected InvalidMaxBlockRange error"),
         }
+    }
+
+    #[tokio::test]
+    async fn returns_error_with_zero_buffer_capacity() {
+        let provider = RootProvider::<Ethereum>::new(RpcClient::mocked(Asserter::new()));
+        let result =
+            EventScannerBuilder::sync().from_latest(10).buffer_capacity(0).connect(provider).await;
+
+        assert!(matches!(result, Err(ScannerError::InvalidBufferCapacity)));
     }
 }

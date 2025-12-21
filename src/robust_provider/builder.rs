@@ -17,7 +17,12 @@ pub const DEFAULT_SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(120);
 pub const DEFAULT_MAX_RETRIES: usize = 3;
 /// Default base delay between retries.
 pub const DEFAULT_MIN_DELAY: Duration = Duration::from_secs(1);
+/// Default subscription channel size.
+pub const DEFAULT_SUBSCRIPTION_BUFFER_CAPACITY: usize = 128;
 
+/// Builder for constructing a [`RobustProvider`].
+///
+/// Use this to configure timeouts, retry/backoff, and one or more fallback providers.
 pub struct RobustProviderBuilder<N: Network, P: IntoRootProvider<N>> {
     primary_provider: P,
     fallback_providers: Vec<BoxedProviderFuture<N>>,
@@ -26,6 +31,7 @@ pub struct RobustProviderBuilder<N: Network, P: IntoRootProvider<N>> {
     max_retries: usize,
     min_delay: Duration,
     reconnect_interval: Duration,
+    subscription_buffer_capacity: usize,
 }
 
 impl<N: Network, P: IntoRootProvider<N>> RobustProviderBuilder<N, P> {
@@ -43,6 +49,7 @@ impl<N: Network, P: IntoRootProvider<N>> RobustProviderBuilder<N, P> {
             max_retries: DEFAULT_MAX_RETRIES,
             min_delay: DEFAULT_MIN_DELAY,
             reconnect_interval: DEFAULT_RECONNECT_INTERVAL,
+            subscription_buffer_capacity: DEFAULT_SUBSCRIPTION_BUFFER_CAPACITY,
         }
     }
 
@@ -77,6 +84,19 @@ impl<N: Network, P: IntoRootProvider<N>> RobustProviderBuilder<N, P> {
     #[must_use]
     pub fn subscription_timeout(mut self, timeout: Duration) -> Self {
         self.subscription_timeout = timeout;
+        self
+    }
+
+    /// Set the subscription stream buffer capacity.
+    ///
+    /// Controls the buffer capacity for subscription streams. If new blocks arrive
+    /// while the stream buffer is full, a lagged error will be emitted, indicating
+    /// that stream items were dropped due to the consumer not keeping pace with the stream.
+    ///
+    /// Default is [`DEFAULT_SUBSCRIPTION_BUFFER_CAPACITY`].
+    #[must_use]
+    pub fn subscription_buffer_capacity(mut self, buffer_capacity: usize) -> Self {
+        self.subscription_buffer_capacity = buffer_capacity;
         self
     }
 
@@ -128,6 +148,7 @@ impl<N: Network, P: IntoRootProvider<N>> RobustProviderBuilder<N, P> {
             max_retries: self.max_retries,
             min_delay: self.min_delay,
             reconnect_interval: self.reconnect_interval,
+            subscription_buffer_capacity: self.subscription_buffer_capacity,
         })
     }
 }
