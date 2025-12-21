@@ -55,9 +55,10 @@ fn latest_events_scanning_benchmark(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(std::time::Duration::from_secs(120));
 
-    // Generate a large pool of events (100K) once
+    // Generate a pool of events once
     // We'll benchmark fetching different "latest N" counts from this pool
-    let total_events = 100_000;
+    // Using 50K total
+    let total_events = 50_000;
 
     println!("Setting up environment with {total_events} total events...");
 
@@ -73,8 +74,8 @@ fn latest_events_scanning_benchmark(c: &mut Criterion) {
     // - 100: Quick recent activity check
     // - 1,000: Moderate history lookup
     // - 10,000: Substantial history fetch
-    // - 50,000: Heavy load retrieval
-    for latest_count in [100, 1_000, 10_000, 50_000] {
+    // - 25,000: Heavy load retrieval
+    for latest_count in [100, 1_000, 10_000, 25_000] {
         println!("Benchmarking latest {latest_count} events...");
 
         group.throughput(Throughput::Elements(latest_count as u64));
