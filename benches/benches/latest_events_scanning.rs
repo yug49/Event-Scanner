@@ -49,10 +49,7 @@ fn latest_events_scanning_benchmark(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("latest_events_scanning");
 
-    // Configure for heavy load tests:
-    // - 10 samples (iterations)
-    // - Long measurement time to accommodate heavy loads
-    group.sample_size(10);
+    // Configure for heavy load tests with long measurement time
     group.measurement_time(std::time::Duration::from_secs(120));
 
     // Generate a pool of events once
