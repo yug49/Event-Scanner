@@ -74,7 +74,7 @@ impl<N: Network> EventScanner<SyncFromLatestEvents, N> {
     /// * [`ScannerError::Timeout`] - if an RPC call required for startup times out.
     /// * [`ScannerError::RpcError`] - if an RPC call required for startup fails.
     #[allow(clippy::missing_panics_doc)]
-    pub async fn start(mut self) -> Result<(), ScannerError> {
+    pub async fn start(self) -> Result<(), ScannerError> {
         let count = self.config.count;
         let provider = self.block_range_scanner.provider().clone();
         let listeners = self.listeners.clone();
@@ -155,8 +155,9 @@ mod tests {
     use alloy_node_bindings::Anvil;
 
     use crate::{
-        DEFAULT_STREAM_BUFFER_CAPACITY,
-        block_range_scanner::{DEFAULT_BLOCK_CONFIRMATIONS, DEFAULT_MAX_BLOCK_RANGE},
+        block_range_scanner::{
+            DEFAULT_BLOCK_CONFIRMATIONS, DEFAULT_MAX_BLOCK_RANGE, DEFAULT_STREAM_BUFFER_CAPACITY,
+        },
         event_scanner::scanner::DEFAULT_MAX_CONCURRENT_FETCHES,
     };
 

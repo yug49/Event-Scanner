@@ -144,7 +144,7 @@ impl<N: Network> EventScanner<LatestEvents, N> {
     /// * [`ScannerError::Timeout`] - if an RPC call required for startup times out.
     /// * [`ScannerError::RpcError`] - if an RPC call required for startup fails.
     /// * [`ScannerError::BlockNotFound`] - if `from_block` or `to_block` cannot be resolved.
-    pub async fn start(mut self) -> Result<(), ScannerError> {
+    pub async fn start(self) -> Result<(), ScannerError> {
         let stream = self
             .block_range_scanner
             .stream_rewind(self.config.from_block, self.config.to_block)
@@ -174,8 +174,9 @@ impl<N: Network> EventScanner<LatestEvents, N> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        DEFAULT_STREAM_BUFFER_CAPACITY,
-        block_range_scanner::{DEFAULT_BLOCK_CONFIRMATIONS, DEFAULT_MAX_BLOCK_RANGE},
+        block_range_scanner::{
+            DEFAULT_BLOCK_CONFIRMATIONS, DEFAULT_MAX_BLOCK_RANGE, DEFAULT_STREAM_BUFFER_CAPACITY,
+        },
         event_scanner::scanner::DEFAULT_MAX_CONCURRENT_FETCHES,
     };
 
