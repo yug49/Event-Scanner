@@ -57,6 +57,13 @@ pub(crate) async fn handle_stream<N: Network, S: Stream<Item = BlockScannerResul
     max_concurrent_fetches: usize,
     buffer_capacity: usize,
 ) {
+    debug!(
+        mode = ?mode,
+        listener_count = listeners.len(),
+        max_concurrent_fetches = max_concurrent_fetches,
+        "Starting event stream handler"
+    );
+
     let (range_tx, _) = broadcast::channel::<BlockScannerResult>(buffer_capacity);
 
     let consumers = match mode {
@@ -76,11 +83,13 @@ pub(crate) async fn handle_stream<N: Network, S: Stream<Item = BlockScannerResul
     };
 
     while let Some(message) = stream.next().await {
-        if let Err(err) = range_tx.send(message) {
-            warn!(error = %err, "No log consumers, stopping stream");
+        if range_tx.send(message).is_err() {
+            debug!("All consumers dropped, stopping stream handler");
             break;
         }
     }
+
+    debug!("Block range stream ended, waiting for consumers");
 
     // Close the channel sender to signal to the log consumers that streaming is done.
     drop(range_tx);
@@ -89,6 +98,8 @@ pub(crate) async fn handle_stream<N: Network, S: Stream<Item = BlockScannerResul
     // finishes its log processing before the next consumer set can be spawned in a subsequent
     // `handle_stream` invocation.
     consumers.join_all().await;
+
+    debug!("All event consumers finished");
 }
 
 #[must_use]
@@ -102,7 +113,6 @@ fn spawn_log_consumers_in_stream_mode<N: Network>(
         let EventListener { filter, sender } = listener;
 
         let provider = provider.clone();
-        let base_filter = Filter::from(&filter);
         let mut range_rx = range_tx.subscribe();
 
         set.spawn(async move {
@@ -117,12 +127,10 @@ fn spawn_log_consumers_in_stream_mode<N: Network>(
             tokio::spawn(async move {
                 let mut stream = ReceiverStream::new(rx)
                     .map(async |message| match message {
-                        Ok(ScannerMessage::Data(range)) => {
-                            get_logs(range, &filter, &base_filter, &provider)
-                                .await
-                                .map(Message::from)
-                                .map_err(ScannerError::from)
-                        }
+                        Ok(ScannerMessage::Data(range)) => get_logs(range, &filter, &provider)
+                            .await
+                            .map(Message::from)
+                            .map_err(ScannerError::from),
                         Ok(ScannerMessage::Notification(notification)) => Ok(notification.into()),
                         // No need to stop the stream on an error, because there will be no more
                         // values received from the range stream.
@@ -152,7 +160,7 @@ fn spawn_log_consumers_in_stream_mode<N: Network>(
                         tx.send(message).await.expect("receiver dropped only if we exit this loop");
                     }
                     Err(RecvError::Closed) => {
-                        debug!("No more block ranges to receive");
+                        trace!("Block range stream closed");
                         break;
                     }
                     Err(RecvError::Lagged(skipped)) => {
@@ -182,7 +190,6 @@ fn spawn_log_consumers_in_collection_mode<N: Network>(
 ) -> JoinSet<()> {
     listeners.iter().cloned().fold(JoinSet::new(), |mut set, listener| {
         let provider = provider.clone();
-        let base_filter = Filter::from(&listener.filter);
         let mut range_rx = range_tx.subscribe();
 
         set.spawn(async move {
@@ -198,7 +205,7 @@ fn spawn_log_consumers_in_collection_mode<N: Network>(
                 let mut stream = ReceiverStream::new(rx)
                     .map(async |message| match message {
                         Ok(ScannerMessage::Data(range)) => {
-                            get_logs(range, &listener.filter, &base_filter, &provider)
+                            get_logs(range, &listener.filter, &provider)
                                 .await
                                 .map(Message::from)
                                 .map_err(ScannerError::from)
@@ -230,7 +237,7 @@ fn spawn_log_consumers_in_collection_mode<N: Network>(
                                 .expect("pending blocks not supported");
                             // Check if in reorg recovery and past the reorg range
                             if reorg_ancestor.is_some_and(|a| last_log_block_num <= a) {
-                                debug!(
+                                trace!(
                                     ancestor = reorg_ancestor,
                                     "Reorg recovery complete, resuming normal log collection"
                                 );
@@ -246,9 +253,9 @@ fn spawn_log_consumers_in_collection_mode<N: Network>(
                         Ok(ScannerMessage::Notification(Notification::ReorgDetected {
                             common_ancestor,
                         })) => {
-                            debug!(
+                            trace!(
                                 common_ancestor = common_ancestor,
-                                "Received ReorgDetected notification"
+                                "Reorg detected, rescanning new canonical blocks"
                             );
                             // Track reorg state for proper log ordering
                             reorg_ancestor = Some(common_ancestor);
@@ -260,7 +267,6 @@ fn spawn_log_consumers_in_collection_mode<N: Network>(
                             // since logs haven't been sent yet
                         }
                         Ok(ScannerMessage::Notification(notification)) => {
-                            debug!(notification = ?notification, "Received notification");
                             if !listener.sender.try_stream(notification).await {
                                 return;
                             }
@@ -274,7 +280,7 @@ fn spawn_log_consumers_in_collection_mode<N: Network>(
                 }
 
                 if collected.is_empty() {
-                    debug!("No logs found");
+                    trace!("No logs found");
                     _ = listener.sender.try_stream(Notification::NoPastLogsFound).await;
                     return;
                 }
@@ -282,7 +288,6 @@ fn spawn_log_consumers_in_collection_mode<N: Network>(
                 trace!(count = collected.len(), "Logs found");
                 collected.reverse(); // restore chronological order
 
-                trace!("Sending collected logs to consumer");
                 _ = listener.sender.try_stream(collected).await;
             });
 
@@ -298,7 +303,7 @@ fn spawn_log_consumers_in_collection_mode<N: Network>(
                         }
                     }
                     Err(RecvError::Closed) => {
-                        debug!("No more block ranges to receive");
+                        trace!("Block range stream closed");
                         break;
                     }
                     Err(RecvError::Lagged(skipped)) => {
@@ -318,13 +323,10 @@ fn spawn_log_consumers_in_collection_mode<N: Network>(
     })
 }
 
+/// Invalidates logs from orphaned blocks.
 fn discard_logs_from_orphaned_blocks(collected: Vec<Log>, common_ancestor: u64) -> Vec<Log> {
-    // Invalidate logs from reorged blocks
     // Logs are ordered newest -> oldest, so skip logs with
     // block_number > common_ancestor at the front
-    // NOTE: Pending logs are not supported therefore this filter
-    // works for now (may need to update once they are). Tracked in
-    // <https://github.com/OpenZeppelin/Event-Scanner/issues/244>
     let before_count = collected.len();
     let collected = collected
         .into_iter()
@@ -337,10 +339,10 @@ fn discard_logs_from_orphaned_blocks(collected: Vec<Log>, common_ancestor: u64) 
         .collect::<Vec<_>>();
     let removed_count = before_count - collected.len();
     if removed_count > 0 {
-        debug!(
+        trace!(
             removed_count = removed_count,
             remaining_count = collected.len(),
-            "Invalidated logs from reorged blocks"
+            "Invalidated logs from orphaned blocks"
         );
     }
     collected
@@ -375,32 +377,29 @@ fn collect_logs<T>(collected: &mut Vec<T>, logs: Vec<T>, count: usize, prepend: 
 async fn get_logs<N: Network>(
     range: RangeInclusive<u64>,
     event_filter: &EventFilter,
-    log_filter: &Filter,
     provider: &RobustProvider<N>,
 ) -> Result<Vec<Log>, RobustProviderError> {
-    let log_filter = log_filter.clone().from_block(*range.start()).to_block(*range.end());
+    let log_filter = Filter::from(event_filter).from_block(*range.start()).to_block(*range.end());
+
+    trace!(from_block = *range.start(), to_block = *range.end(), "Fetching logs for block range");
 
     match provider.get_logs(&log_filter).await {
         Ok(logs) => {
-            if logs.is_empty() {
-                return Ok(logs);
+            if !logs.is_empty() {
+                debug!(
+                    from_block = *range.start(),
+                    to_block = *range.end(),
+                    log_count = logs.len(),
+                    "Found logs in block range"
+                );
             }
-
-            info!(
-                filter = %event_filter,
-                log_count = logs.len(),
-                block_range = ?range,
-                "found logs for event in block range"
-            );
-
             Ok(logs)
         }
         Err(e) => {
             error!(
-                filter = %event_filter,
-                error = %e,
-                block_range = ?range,
-                "failed to get logs for block range"
+                from_block = *range.start(),
+                to_block = *range.end(),
+                "Failed to get logs for block range"
             );
 
             Err(e)
