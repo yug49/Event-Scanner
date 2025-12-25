@@ -2,12 +2,20 @@
 //!
 //! Heavy load tests that measure the time to fetch all expected events.
 
+use std::sync::OnceLock;
+
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use event_scanner::{EventFilter, EventScannerBuilder, Message};
 use event_scanner_benches::{
     BenchConfig, BenchEnvironment, count_increased_signature, setup_environment,
 };
 use tokio_stream::StreamExt;
+
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+fn get_runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().expect("failed to create tokio runtime"))
+}
 
 /// Runs a single historic scan.
 ///
@@ -42,7 +50,7 @@ async fn run_historic_scan(env: &BenchEnvironment) {
 }
 
 fn historic_scanning_benchmark(c: &mut Criterion) {
-    let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+    let rt = get_runtime();
 
     let mut group = c.benchmark_group("historic_scanning");
 
