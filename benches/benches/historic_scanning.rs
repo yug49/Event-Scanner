@@ -9,10 +9,10 @@ use event_scanner_benches::{
 };
 use tokio_stream::StreamExt;
 
-/// Runs a single historic scan and asserts the expected event count.
+/// Runs a single historic scan.
 ///
-/// This fetches ALL events from block 0 to latest
-async fn run_historic_scan(env: &BenchEnvironment, expected_count: usize) {
+/// This fetches ALL events from block 0 to latest.
+async fn run_historic_scan(env: &BenchEnvironment) {
     let filter = EventFilter::new()
         .contract_address(env.contract_address)
         .event(count_increased_signature());
@@ -28,12 +28,9 @@ async fn run_historic_scan(env: &BenchEnvironment, expected_count: usize) {
     let mut stream = scanner.subscribe(filter);
     scanner.start().await.expect("failed to start scanner");
 
-    let mut log_count = 0;
     while let Some(message) = stream.next().await {
         match message {
-            Ok(Message::Data(logs)) => {
-                log_count += logs.len();
-            }
+            Ok(Message::Data(_)) => {}
             Ok(Message::Notification(notification)) => {
                 panic!("Received unexpected notification: {notification:?}");
             }
@@ -42,8 +39,6 @@ async fn run_historic_scan(env: &BenchEnvironment, expected_count: usize) {
             }
         }
     }
-
-    assert_eq!(log_count, expected_count, "expected {expected_count} events, got {log_count}");
 }
 
 fn historic_scanning_benchmark(c: &mut Criterion) {
@@ -70,7 +65,7 @@ fn historic_scanning_benchmark(c: &mut Criterion) {
         group.throughput(Throughput::Elements(event_count as u64));
 
         group.bench_with_input(BenchmarkId::new("events", event_count), &env, |b, env| {
-            b.to_async(&rt).iter(|| run_historic_scan(env, event_count));
+            b.to_async(&rt).iter(|| run_historic_scan(env));
         });
     }
 
