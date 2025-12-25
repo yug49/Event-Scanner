@@ -46,7 +46,8 @@ fn historic_scanning_benchmark(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("historic_scanning");
 
-    // Configure for heavy load tests with long measurement time
+    // Configure for heavy load tests
+    group.warm_up_time(std::time::Duration::from_secs(5));
     group.measurement_time(std::time::Duration::from_secs(120));
 
     // Heavy load test: 100,000 events

@@ -49,7 +49,8 @@ fn latest_events_scanning_benchmark(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("latest_events_scanning");
 
-    // Configure for heavy load tests with long measurement time
+    // Configure for heavy load tests
+    group.warm_up_time(std::time::Duration::from_secs(5));
     group.measurement_time(std::time::Duration::from_secs(120));
 
     // Generate a pool of events once
