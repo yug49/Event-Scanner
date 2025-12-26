@@ -5,6 +5,7 @@
 
 use std::sync::OnceLock;
 
+use anyhow::{Result, bail, ensure};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use event_scanner::{EventFilter, EventScannerBuilder, Message};
 use event_scanner_benches::{
@@ -21,18 +22,16 @@ fn get_runtime() -> &'static tokio::runtime::Runtime {
 /// Runs a single latest events scan and asserts the expected event count.
 ///
 /// This fetches the `latest_count` most recent events.
-async fn run_latest_events_scan(env: &BenchEnvironment, latest_count: usize) {
+async fn run_latest_events_scan(env: &BenchEnvironment, latest_count: usize) -> Result<()> {
     let filter = EventFilter::new()
         .contract_address(env.contract_address)
         .event(count_increased_signature());
 
-    let mut scanner = EventScannerBuilder::latest(latest_count)
-        .connect(env.provider.clone())
-        .await
-        .expect("failed to build scanner");
+    let mut scanner =
+        EventScannerBuilder::latest(latest_count).connect(env.provider.clone()).await?;
 
     let mut stream = scanner.subscribe(filter);
-    scanner.start().await.expect("failed to start scanner");
+    scanner.start().await?;
 
     let mut log_count = 0;
     while let Some(message) = stream.next().await {
@@ -41,15 +40,17 @@ async fn run_latest_events_scan(env: &BenchEnvironment, latest_count: usize) {
                 log_count += logs.len();
             }
             Ok(Message::Notification(notification)) => {
-                panic!("Received unexpected notification: {notification:?}");
+                bail!("Received unexpected notification: {notification:?}");
             }
             Err(e) => {
-                panic!("Received error: {e}");
+                bail!("Received error: {e}");
             }
         }
     }
 
-    assert_eq!(log_count, latest_count, "expected {latest_count} events, got {log_count}");
+    ensure!(log_count == latest_count, "expected {latest_count} events, got {log_count}");
+
+    Ok(())
 }
 
 fn latest_events_scanning_benchmark(c: &mut Criterion) {
@@ -90,7 +91,9 @@ fn latest_events_scanning_benchmark(c: &mut Criterion) {
             BenchmarkId::new("latest", latest_count),
             &latest_count,
             |b, &count| {
-                b.to_async(&rt).iter(|| run_latest_events_scan(&env, count));
+                b.to_async(&rt).iter(|| async {
+                    run_latest_events_scan(&env, count).await.expect("latest events scan failed")
+                });
             },
         );
     }

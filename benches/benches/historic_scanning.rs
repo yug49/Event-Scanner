@@ -4,6 +4,7 @@
 
 use std::sync::OnceLock;
 
+use anyhow::{Result, bail};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use event_scanner::{EventFilter, EventScannerBuilder, Message};
 use event_scanner_benches::{
@@ -20,7 +21,7 @@ fn get_runtime() -> &'static tokio::runtime::Runtime {
 /// Runs a single historic scan.
 ///
 /// This fetches ALL events from block 0 to latest.
-async fn run_historic_scan(env: &BenchEnvironment) {
+async fn run_historic_scan(env: &BenchEnvironment) -> Result<()> {
     let filter = EventFilter::new()
         .contract_address(env.contract_address)
         .event(count_increased_signature());
@@ -30,23 +31,24 @@ async fn run_historic_scan(env: &BenchEnvironment) {
         .from_block(0)
         .to_block(alloy::eips::BlockNumberOrTag::Latest)
         .connect(env.provider.clone())
-        .await
-        .expect("failed to build scanner");
+        .await?;
 
     let mut stream = scanner.subscribe(filter);
-    scanner.start().await.expect("failed to start scanner");
+    scanner.start().await?;
 
     while let Some(message) = stream.next().await {
         match message {
             Ok(Message::Data(_)) => {}
             Ok(Message::Notification(notification)) => {
-                panic!("Received unexpected notification: {notification:?}");
+                bail!("Received unexpected notification: {notification:?}");
             }
             Err(e) => {
-                panic!("Received error: {e}");
+                bail!("Received error: {e}");
             }
         }
     }
+
+    Ok(())
 }
 
 fn historic_scanning_benchmark(c: &mut Criterion) {
@@ -74,7 +76,8 @@ fn historic_scanning_benchmark(c: &mut Criterion) {
         group.throughput(Throughput::Elements(event_count as u64));
 
         group.bench_with_input(BenchmarkId::new("events", event_count), &env, |b, env| {
-            b.to_async(&rt).iter(|| run_historic_scan(env));
+            b.to_async(&rt)
+                .iter(|| async { run_historic_scan(env).await.expect("historic scan failed") });
         });
     }
 
