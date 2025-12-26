@@ -64,7 +64,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@8b0419c685ef46cb79ec93fbdc131174afceb730 # v1.6.0
 
       - name: Install Bencher CLI
-        uses: bencherdev/bencher@main
+        uses: bencherdev/bencher@2f1532643adc0e69e52acaec936d227ff14da24f # v0.5.9
 
       - name: Run historic benchmarks and track with Bencher
         env:
