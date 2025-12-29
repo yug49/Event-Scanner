@@ -42,7 +42,7 @@ async fn run_historic_scan(env: &BenchEnvironment, to_block: u64) -> Result<()> 
         .max_block_range(100)
         .from_block(0)
         .to_block(to_block)
-        .connect(env.provider)
+        .connect(env.provider.clone())
         .await?;
 
     let mut stream = scanner.subscribe(filter);
