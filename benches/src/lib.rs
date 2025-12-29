@@ -2,6 +2,23 @@
 //!
 //! This module provides shared setup utilities for benchmarks, including
 //! Anvil instance management, contract deployment, and event generation.
+//!
+//! ## Usage
+//!
+//! For benchmarks, use `setup_from_dump` to load pre-generated state:
+//!
+//! ```rust,ignore
+//! use event_scanner_benches::setup_from_dump;
+//! use std::path::Path;
+//!
+//! let env = setup_from_dump(Path::new("benches/dumps/state_100000.json.gz")).await?;
+//! ```
+
+use std::{
+    fs::File,
+    io::{BufReader, Read, Write},
+    path::Path,
+};
 
 use alloy::{
     network::Ethereum,
@@ -11,8 +28,11 @@ use alloy::{
     sol_types::SolEvent,
 };
 use alloy_node_bindings::{Anvil, AnvilInstance};
+use anyhow::Context;
 use event_scanner::robust_provider::{RobustProvider, RobustProviderBuilder};
+use flate2::read::GzDecoder;
 use futures::future::try_join_all;
+use serde::{Deserialize, Serialize};
 
 sol! {
     // Built directly with solc 0.8.30+commit.73712a01.Darwin.appleclang
@@ -58,6 +78,8 @@ pub struct BenchEnvironment {
     pub contract_address: Address,
     /// The total number of events generated.
     pub event_count: usize,
+    /// The latest block number at the time of dump.
+    pub block_number: u64,
 }
 
 /// Configuration for setting up a benchmark environment.
@@ -76,8 +98,127 @@ impl BenchConfig {
     }
 }
 
+/// Metadata for a dump file, stored alongside the dump.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DumpMetadata {
+    /// Number of events in the dump.
+    pub event_count: usize,
+    /// Contract address in the dump.
+    pub contract_address: Address,
+    /// Block number at time of dump.
+    pub block_number: u64,
+    /// Time taken to generate events (for reference).
+    pub generation_time_secs: f64,
+    /// Anvil version used to generate the dump.
+    pub anvil_version: Option<String>,
+}
+
+/// Sets up a benchmark environment from a pre-generated dump file.
+///
+/// # Arguments
+///
+/// * `dump_path` - Path to the dump file. Can be `.json` or `.json.gz` (compressed).
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The dump file cannot be read or decompressed
+/// - The metadata file is missing or invalid
+/// - Anvil fails to spawn or load the state
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let env = setup_from_dump(Path::new("benches/dumps/state_100000.json.gz")).await?;
+/// ```
+pub async fn setup_from_dump(dump_path: &Path) -> anyhow::Result<BenchEnvironment> {
+    // Determine if compressed and get the JSON path
+    let is_compressed = dump_path.extension().is_some_and(|ext| ext == "gz");
+
+    let json_path = if is_compressed {
+        // Decompress to a temporary location
+        let decompressed_path = dump_path.with_extension("");
+        decompress_dump(dump_path, &decompressed_path)?;
+        decompressed_path
+    } else {
+        dump_path.to_path_buf()
+    };
+
+    // Load metadata
+    let metadata_path = if is_compressed {
+        // For .json.gz, metadata is at .metadata.json (strip .json.gz, add .metadata.json)
+        let stem = dump_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let stem_without_json = stem.strip_suffix(".json").unwrap_or(stem);
+        dump_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(format!("{stem_without_json}.metadata.json"))
+    } else {
+        dump_path.with_extension("metadata.json")
+    };
+
+    let metadata: DumpMetadata =
+        serde_json::from_reader(File::open(&metadata_path).with_context(|| {
+            format!("Failed to open metadata file: {}", metadata_path.display())
+        })?)
+        .with_context(|| format!("Failed to parse metadata file: {}", metadata_path.display()))?;
+
+    // Start Anvil with the loaded state
+    let anvil = Anvil::new()
+        .arg("--load-state")
+        .arg(&json_path)
+        .try_spawn()
+        .context("Failed to spawn Anvil with loaded state")?;
+
+    // Connect to Anvil
+    let provider = ProviderBuilder::new()
+        .connect(anvil.ws_endpoint_url().as_str())
+        .await
+        .context("Failed to connect to Anvil")?;
+
+    // Build robust provider for the scanner
+    let robust_provider = RobustProviderBuilder::new(provider)
+        .call_timeout(std::time::Duration::from_secs(30))
+        .max_retries(5)
+        .min_delay(std::time::Duration::from_millis(500))
+        .build()
+        .await?;
+
+    Ok(BenchEnvironment {
+        anvil,
+        provider: robust_provider,
+        contract_address: metadata.contract_address,
+        event_count: metadata.event_count,
+        block_number: metadata.block_number,
+    })
+}
+
+/// Decompresses a gzip file to the specified output path.
+fn decompress_dump(compressed_path: &Path, output_path: &Path) -> anyhow::Result<()> {
+    let file = File::open(compressed_path).with_context(|| {
+        format!("Failed to open compressed dump: {}", compressed_path.display())
+    })?;
+
+    let mut decoder = GzDecoder::new(BufReader::new(file));
+    let mut decompressed = Vec::new();
+    decoder
+        .read_to_end(&mut decompressed)
+        .with_context(|| format!("Failed to decompress dump: {}", compressed_path.display()))?;
+
+    let mut output_file = File::create(output_path)
+        .with_context(|| format!("Failed to create output file: {}", output_path.display()))?;
+    output_file
+        .write_all(&decompressed)
+        .with_context(|| format!("Failed to write decompressed dump: {}", output_path.display()))?;
+
+    Ok(())
+}
+
 /// Sets up a benchmark environment by spawning Anvil, deploying a contract,
 /// and generating the specified number of events.
+///
+/// **Note:** For benchmarks, prefer `setup_from_dump` which loads pre-generated
+/// state and is much faster.
 ///
 /// # Errors
 ///
@@ -87,6 +228,7 @@ impl BenchConfig {
 /// # Panics
 ///
 /// Panics if Anvil does not return a default wallet.
+#[allow(dead_code)]
 pub async fn setup_environment(config: BenchConfig) -> anyhow::Result<BenchEnvironment> {
     let anvil = Anvil::new().block_time_f64(config.block_time).try_spawn()?;
 
@@ -99,6 +241,9 @@ pub async fn setup_environment(config: BenchConfig) -> anyhow::Result<BenchEnvir
 
     // Generate events by sending transactions
     generate_events(&contract, config.event_count).await?;
+
+    // Get latest block number
+    let block_number = provider.get_block_number().await?;
 
     // Build robust provider for the scanner
     let robust_provider = RobustProviderBuilder::new(provider)
@@ -113,10 +258,12 @@ pub async fn setup_environment(config: BenchConfig) -> anyhow::Result<BenchEnvir
         provider: robust_provider,
         contract_address,
         event_count: config.event_count,
+        block_number,
     })
 }
 
 /// Generates the specified number of events by calling the contract's `increase` function.
+#[allow(dead_code)]
 async fn generate_events<P>(
     contract: &Counter::CounterInstance<P>,
     count: usize,

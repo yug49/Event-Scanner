@@ -2,16 +2,26 @@
 //!
 //! Heavy load tests that measure the time to fetch the N most recent events
 //! from a large pool of pre-generated events.
+//! Uses pre-generated Anvil state dumps for fast, reproducible setup.
+//!
+//! Benchmarks fetching latest events from a 100k event pool:
+//! - 10,000 latest events
+//! - 50,000 latest events
+//! - 100,000 latest events (all)
 
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{Result, bail, ensure};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use event_scanner::{EventFilter, EventScannerBuilder, Message};
-use event_scanner_benches::{
-    BenchConfig, BenchEnvironment, count_increased_signature, setup_environment,
-};
+use event_scanner_benches::{BenchEnvironment, count_increased_signature, setup_from_dump};
 use tokio_stream::StreamExt;
+
+/// Returns the path to the dump file, resolved from the crate's manifest directory.
+fn dump_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("dumps/state_100000.json.gz")
+}
 
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
@@ -60,29 +70,23 @@ fn latest_events_scanning_benchmark(c: &mut Criterion) {
 
     // Configure for heavy load tests
     group.warm_up_time(std::time::Duration::from_secs(5));
-    group.measurement_time(std::time::Duration::from_secs(120));
+    group.measurement_time(std::time::Duration::from_secs(140));
 
-    // Generate a pool of events once
-    // We'll benchmark fetching different "latest N" counts from this pool
-    // Using 50K total
-    let total_events = 50_000;
-
-    println!("Setting up environment with {total_events} total events...");
-
+    // Load environment from pre-generated dump (100k events)
+    println!("Loading benchmark environment from dump file...");
     let env: BenchEnvironment = rt.block_on(async {
-        let config = BenchConfig::new(total_events);
-        setup_environment(config).await.expect("failed to setup benchmark environment")
+        setup_from_dump(&dump_path()).await.expect("failed to load benchmark environment from dump")
     });
+    println!(
+        "Environment ready: {} events across {} blocks at contract {}",
+        env.event_count, env.block_number, env.contract_address
+    );
 
-    println!("Environment ready. Starting benchmarks...");
-
-    // Benchmark fetching different "latest N" counts
-    // Trying to replicate realistic use cases:
-    // - 100: Quick recent activity check
-    // - 1,000: Moderate history lookup
+    // Benchmark fetching latest N events from the 100k event pool:
     // - 10,000: Substantial history fetch
-    // - 25,000: Heavy load retrieval
-    for latest_count in [100, 1_000, 10_000, 25_000] {
+    // - 50,000: Heavy load retrieval
+    // - 100,000: All events (full scan)
+    for latest_count in [10_000, 50_000, 100_000] {
         println!("Benchmarking latest {latest_count} events...");
 
         group.throughput(Throughput::Elements(latest_count as u64));
@@ -91,8 +95,8 @@ fn latest_events_scanning_benchmark(c: &mut Criterion) {
             BenchmarkId::new("latest", latest_count),
             &latest_count,
             |b, &count| {
-                b.to_async(&rt).iter(|| async {
-                    run_latest_events_scan(&env, count).await.expect("latest events scan failed")
+                b.to_async(rt).iter(|| async {
+                    run_latest_events_scan(&env, count).await.expect("latest events scan failed");
                 });
             },
         );

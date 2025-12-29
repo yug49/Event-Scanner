@@ -46,14 +46,6 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Free up disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf /usr/local/lib/android
-          df -h
-
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
 
@@ -65,6 +57,12 @@ jobs:
 
       - name: Install Bencher CLI
         uses: bencherdev/bencher@2f1532643adc0e69e52acaec936d227ff14da24f # v0.5.9
+
+      - name: Decompress benchmark state dumps
+        run: |
+          echo "Decompressing Anvil state dumps..."
+          gunzip -k benches/dumps/*.json.gz
+          ls -lh benches/dumps/
 
       - name: Run historic benchmarks and track with Bencher
         env:
@@ -99,14 +97,6 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Free up disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf /usr/local/lib/android
-          df -h
-
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
 
@@ -118,6 +108,12 @@ jobs:
 
       - name: Install Bencher CLI
         uses: bencherdev/bencher@2f1532643adc0e69e52acaec936d227ff14da24f # v0.5.9
+
+      - name: Decompress benchmark state dumps
+        run: |
+          echo "Decompressing Anvil state dumps..."
+          gunzip -k benches/dumps/*.json.gz
+          ls -lh benches/dumps/
 
       - name: Run latest events benchmarks and track with Bencher
         env:
