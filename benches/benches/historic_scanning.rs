@@ -8,8 +8,10 @@
 //! - First 1/2 of blocks (~50k events)
 //! - All blocks (100k events)
 
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 use anyhow::{Result, bail};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
@@ -66,9 +68,9 @@ fn historic_scanning_benchmark(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("historic_scanning");
 
-    // Configure for heavy load tests
+    // Configure for heavy load tests (200s needed for slower CI runners)
     group.warm_up_time(std::time::Duration::from_secs(5));
-    group.measurement_time(std::time::Duration::from_secs(140));
+    group.measurement_time(std::time::Duration::from_secs(200));
 
     // Load environment from pre-generated dump (100k events)
     println!("Loading benchmark environment from dump file...");
