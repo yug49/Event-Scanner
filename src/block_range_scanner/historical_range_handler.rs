@@ -97,10 +97,14 @@ impl<N: Network> HistoricalRangeHandler<N> {
         Some((self.start.max(finalized_batch_end + 1), finalized_block_num))
     }
 
-    /// Streams non-finalized blocks with per-range reorg detection.
+    /// Streams non-finalized blocks with end-of-range reorg detection.
     ///
-    /// After each range, the end block's hash is compared against a pre-streaming snapshot.
-    /// If a reorg is detected, the iterator resets to `min_common_ancestor + 1` and re-streams.
+    /// The handler takes a snapshot of the requested end block before streaming the
+    /// non-finalized portion of the range. After streaming that portion, it re-fetches the end
+    /// block and compares hashes. If a reorg is detected, it emits a
+    /// [`Notification::ReorgDetected`] with the common ancestor and re-streams the non-finalized
+    /// portion starting from `min_common_ancestor + 1`. This process repeats until the end block
+    /// remains stable.
     ///
     /// Returns `ChannelState::Closed` if the channel is closed, `ChannelState::Open` otherwise.
     async fn stream_non_finalized_blocks(
